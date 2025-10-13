@@ -1,0 +1,20 @@
+# Ignore Python virtual environment
+venv/
+.venv/
+
+# Ignore libs folder
+libs/
+
+# Ignore any files or folders starting with double underscores
+__*/
+
+# Optional: common Python ignores (recommended)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.env
+*.DS_Store
+*.idea/
+*.vscode/

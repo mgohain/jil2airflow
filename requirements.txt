@@ -1,0 +1,12 @@
+# Requirements for full Python environment deployment
+--constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.3/constraints-3.12.txt"
+streamlit
+pandas
+plotly
+pyvis
+streamlit-ace
+apache-airflow
+apache-airflow-providers-cncf-kubernetes
+apache-airflow-providers-ssh
+mysql-connector-python
+apache-airflow-providers-sftp
