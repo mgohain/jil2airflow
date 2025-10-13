@@ -3,10 +3,8 @@ venv/
 .venv/
 
 # Ignore libs folder
-libs/
+lib/
 
-# Ignore any files or folders starting with double underscores
-__*/
 
 # Optional: common Python ignores (recommended)
 __pycache__/
