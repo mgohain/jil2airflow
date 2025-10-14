@@ -32,7 +32,8 @@ def init_session():
         "selected_dag_to_view": None,
         "validation_failed": False,
         "ext_dep_dict": {},
-        "ext_option": None
+        "ext_option": None,
+        "jil_files_full_name": []
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -100,6 +101,7 @@ if st.session_state.step == 0:
 
     if files:
         st.session_state.jil_files = [os.path.splitext(file.name)[0] for file in files]
+        st.session_state.jil_files_full_name = [file.name for file in files]
         if not isinstance(files, list):
             files = [files]
         parsed_files = {}
@@ -148,7 +150,8 @@ if st.session_state.step == 0:
         if parsed_files:
             if st.session_state.mode == "single":
                 st.session_state.jil_content = content
-                st.session_state.jobs_dict = next(iter(parsed_files.values()))                
+                st.session_state.batch_jobs_dicts = parsed_files
+                st.session_state.jobs_dict = next(iter(parsed_files.values()))                          
             else:
                 st.session_state.batch_jobs_dicts = parsed_files
             #------------------- Redirecting if external dependency found-------   
@@ -340,14 +343,11 @@ elif st.session_state.step == 3 and st.session_state.mode == "batch":
 # Step -1: External dependency handling in batch mode
 # ----------------------------------------
 elif st.session_state.step == -1 and st.session_state.mode == "batch":
-    print("step -1 :: st.session_state.batch_jobs_dicts")
-    print(st.session_state.batch_jobs_dicts)
-    print("step -1 :: st.session_state.jobs_dict")
-    print(st.session_state.jobs_dict)
     st.error("⚠️ External dependency found!")
     for fname, ext_dep_list in st.session_state.ext_dep_dict.items():
         st.write(f"External dependency found: {ext_dep_list} in file {fname}")
-    if st.button("⬅️ Back to Upload"):
+    st.error("⚠️ Remove files having external dependency!")
+    if st.button("🔄 Restart Wizard", key="step_minus1_restart"):
         env_vars = st.session_state.get("env_vars", {})
         env_vars_list = st.session_state.get("env_vars_list", [])
         for key in list(st.session_state.keys()):
@@ -359,11 +359,6 @@ elif st.session_state.step == -1 and st.session_state.mode == "batch":
 # Step 9: External dependency handling in single mode
 # ----------------------------------------
 elif st.session_state.step == 9 and st.session_state.mode == "single":
-    print("inside 9 ---------- st.session_state.batch_jobs_dicts")
-    print(st.session_state.batch_jobs_dicts)
-    print("inside 9 ---------- st.session_state.jobs_dict")
-    print(st.session_state.jobs_dict)
-    print("------------------------------------------------------------------------------Debug--------------------------")
     st.error("⚠️ External dependency found!")
     for fname, ext_dep_list in st.session_state.ext_dep_dict.items():
         st.write(f"External dependency found: {ext_dep_list} in file {fname}")
@@ -371,10 +366,11 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
     st.session_state.ext_option = "merge" if "Merge" in option else "separate"
     ext_files = st.file_uploader("Upload JIL files", type=["jil", "txt"], accept_multiple_files=True, key="step9_file_uploader")
     st.subheader("Already uploaded files:")
-    for fname in st.session_state.jil_files:
+    for fname in st.session_state.jil_files_full_name:
         st.write(f"- {fname}")
     if ext_files:
         st.session_state.jil_files.extend([os.path.splitext(file.name)[0] for file in ext_files]) #Appending new files
+        st.session_state.jil_files_full_name.extend([file.name for file in ext_files])
         if not isinstance(ext_files, list):
             ext_files = [ext_files]
         parsed_files = {}
@@ -429,8 +425,6 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
                 st.session_state.jil_content = content
                 for job_dict in parsed_files.values():
                     st.session_state.jobs_dict.update(job_dict)
-                print("last 9---------- st.session_state.jobs_dict")
-                print(st.session_state.jobs_dict)
                 # ----------------------------------------
                 # Start of validation
                 # Check for external dependency. If present mark as failure
@@ -442,15 +436,29 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
                     #st.session_state.step = 99
                     #st.rerun()                
             else:
-                print(f"step -9 separate option--------------- {parsed_files}")
-                st.session_state.batch_jobs_dicts.update(parsed_files)
-                st.session_state.mode = "batch"
+                for file_key, jobs_dict in parsed_files.items():
+                    if file_key in st.session_state.batch_jobs_dicts:
+                        st.session_state.batch_jobs_dicts[file_key].update(jobs_dict)
+                    else:
+                        st.session_state.batch_jobs_dicts[file_key] = jobs_dict
             cols = st.columns([3, 1, 3])
             with cols[0]:
-                if st.button("Next ➡️", key="step0_next"):
+                if st.button("Next ➡️", key="step9_next"):
                     st.session_state.step = 1
+                    if st.session_state.ext_option == "separate":
+                        st.session_state.mode = "batch"
                     st.rerun()
-        else:
-            cols = st.columns([3, 1, 3])
-            with cols[0]:
-                st.button("Next ➡️", key="step0_next_nofile", disabled=True)   
+            with cols[1]:
+                if st.button("🔄 Restart Wizard", key="step9_restart"):
+                    env_vars = st.session_state.get("env_vars", {})
+                    env_vars_list = st.session_state.get("env_vars_list", [])
+                    #print(f"env_vars={env_vars} env_vars_list={env_vars_list}")
+                    for key in list(st.session_state.keys()):
+                        del st.session_state[key]
+                    st.session_state.env_vars = env_vars
+                    st.session_state.env_vars_list = env_vars_list
+                    st.rerun()
+    else:
+        cols = st.columns([3, 1, 3])
+        with cols[0]:
+            st.button("Next ➡️", key="step0_next_nofile", disabled=True)
