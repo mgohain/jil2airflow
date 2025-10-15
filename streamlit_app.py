@@ -33,7 +33,8 @@ def init_session():
         "validation_failed": False,
         "ext_dep_dict": {},
         "ext_option": None,
-        "jil_files_full_name": []
+        "jil_files_full_name": [],
+        "dep_info": {}
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -150,8 +151,9 @@ if st.session_state.step == 0:
         if parsed_files:
             if st.session_state.mode == "single":
                 st.session_state.jil_content = content
-                st.session_state.batch_jobs_dicts = parsed_files
-                st.session_state.jobs_dict = next(iter(parsed_files.values()))                          
+                st.session_state.batch_jobs_dicts[st.session_state.jil_files_full_name[0]] = next(iter(parsed_files.values()))
+                st.session_state.jobs_dict = next(iter(parsed_files.values()))
+                st.session_state.dep_info[st.session_state.jil_files_full_name[0]]="downstream"                                       
             else:
                 st.session_state.batch_jobs_dicts = parsed_files
             #------------------- Redirecting if external dependency found-------   
@@ -361,7 +363,7 @@ elif st.session_state.step == -1 and st.session_state.mode == "batch":
 elif st.session_state.step == 9 and st.session_state.mode == "single":
     st.error("⚠️ External dependency found!")
     for fname, ext_dep_list in st.session_state.ext_dep_dict.items():
-        st.write(f"External dependency found: {ext_dep_list} in file {fname}")
+        st.write(f"External dependency {ext_dep_list} found in file {fname}")
     option = st.radio("Upload required JIL files", ["Merge - This will generate single Dag", "Separate - This will generate separate Dags"])
     st.session_state.ext_option = "merge" if "Merge" in option else "separate"
     ext_files = st.file_uploader("Upload JIL files", type=["jil", "txt"], accept_multiple_files=True, key="step9_file_uploader")
@@ -381,6 +383,7 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
             try:
                 if st.session_state.ext_option == "separate":
                     parser = JILParser()
+                    st.session_state.dep_info[f.name] = "upstream"
                 content = f.read().decode("utf-8")
                 jobs = parser.parse_content(content)
                 # Always pass env vars as job.envvars
