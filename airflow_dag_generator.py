@@ -8,6 +8,7 @@ from collections import defaultdict
 import re
 from utils.timezone_map import TIMEZONE_MAP
 from utils.external_dep_utils import ExternalDepUtils
+from utils.converter_utils import Utils
 
 class AirflowDAGGenerator:
     """Generates Airflow DAG from parsed Autosys jobs"""
@@ -16,7 +17,7 @@ class AirflowDAGGenerator:
                  external_task_to_dependent_task_map: Dict[str, str], external_task_to_dag_id_map: Dict[str, str],
                  downstream_jil_schedule: str, handle_ext_ref=False):
         self.jobs = jobs
-        self.box_hierarchy = self._build_box_hierarchy()
+        self.box_hierarchy = Utils.build_box_hierarchy(self.jobs)
         self.status_failure = "failure"
         self.status_retry = "retry"
         self.ext_dep_list = ext_dep_list
@@ -32,53 +33,6 @@ class AirflowDAGGenerator:
             return True
         return False
     
-    def _build_box_hierarchy(self) -> Dict[str, Dict]:
-        """Build hierarchy of box jobs and their contained jobs with nesting support"""
-        hierarchy = {}
-        
-        # First pass: identify all box jobs and their direct children
-        for job_name, job in self.jobs.items():
-            if job.is_box_job():
-                hierarchy[job_name] = {
-                    'job': job,
-                    'children': [],
-                    'parent': None,
-                    'level': 0
-                }
-        
-        # Second pass: assign children to their parent boxes
-        for job_name, job in self.jobs.items():
-            if job.box_name and job.box_name in hierarchy:
-                hierarchy[job.box_name]['children'].append(job_name)
-                
-                # If this child is also a box, set its parent
-                if job.is_box_job() and job_name in hierarchy:
-                    hierarchy[job_name]['parent'] = job.box_name
-        
-        # Third pass: calculate nesting levels
-        def calculate_level(box_name, visited=None):
-            if visited is None:
-                visited = set()
-            
-            if box_name in visited:
-                return 0  # Circular reference protection
-            
-            visited.add(box_name)
-            
-            if hierarchy[box_name]['parent'] is None:
-                hierarchy[box_name]['level'] = 0
-            else:
-                parent_level = calculate_level(hierarchy[box_name]['parent'], visited)
-                hierarchy[box_name]['level'] = parent_level + 1
-            
-            visited.remove(box_name)
-            return hierarchy[box_name]['level']
-        
-        # Calculate levels for all boxes
-        for box_name in hierarchy:
-            calculate_level(box_name)
-        
-        return hierarchy
 
     def generate_dag(self, dag_id: str, schedule_interval: str = None) -> str:
         """Generate complete Airflow DAG code and validate it using Airflow's DagBag."""
@@ -92,7 +46,7 @@ class AirflowDAGGenerator:
 
         # Extract scheduling info from jobs if not provided
         if not schedule_interval or schedule_interval == '' or schedule_interval.upper() == "DEFAULT":
-            schedule_interval = self._determine_schedule_interval()
+            schedule_interval = Utils.determine_schedule_interval(self.jobs)
         else:
             # If schedule provided as argument, format it properly
             schedule_interval = repr(schedule_interval)
@@ -1173,118 +1127,3 @@ class AirflowDAGGenerator:
         
     #     # Build cron expression: minute hour day month day_of_week
     #     return f"{minute} {hour} * * {dow_str}"
-
-    def _determine_schedule_interval(self) -> str:
-        """Determine schedule interval from job start times, start mins, and date conditions"""
-        for job in self.jobs.values():
-            print(
-                f"Run Calendar: {job.run_calendar}, "
-                f"Start Times: {job.start_times}, "
-                f"Start Mins: {job.start_mins}, "
-                f"Days of Week: {job.days_of_week}"
-            )
-            
-            # Run calendar takes precedence
-            if job.run_calendar:
-                return f"{job.run_calendar}()"
-            
-            # Ensure start_times and start_mins are not both set
-            if job.start_times and job.start_mins:
-                raise ValueError(f"Job {job.job_name} has both start_times and start_mins defined, which is not allowed.")
-            
-            if job.start_times:
-                cron_schedule = self._convert_autosys_schedule_to_cron(job.start_times, job.days_of_week)
-                if cron_schedule:
-                    return f"'{cron_schedule}'"
-            
-            elif job.start_mins:
-                cron_schedule = self._convert_start_mins_to_cron(job.start_mins, job.days_of_week)
-                if cron_schedule:
-                    return f"'{cron_schedule}'"
-        
-        return "None"
-
-    def _convert_autosys_schedule_to_cron(self, start_times_str: str, days_of_week: List[str]) -> str:
-        """Convert Autosys start_times string to cron expression"""
-        # Clean and split string
-        start_times = [t.strip().strip('"') for t in start_times_str.split(',') if t.strip()]
-        
-        hours = []
-        minutes = []
-        
-        for time_str in start_times:
-            hour, minute = self._parse_time(time_str)
-            hours.append(str(hour))
-            minutes.append(str(minute))
-        
-        if len(set(minutes)) == 1:
-            minute_str = minutes[0]
-            hour_str = ','.join(hours)
-        else:
-            # Different minutes — just take the first time
-            return self._convert_single_time_to_cron(start_times[0], days_of_week)
-        
-        dow_str = self._convert_days_of_week(days_of_week)
-        return f"{minute_str} {hour_str} * * {dow_str}"
-
-    def _convert_start_mins_to_cron(self, start_mins_str: str, days_of_week: List[str]) -> str:
-        """Convert Autosys start_mins string to cron expression"""
-        # Clean and split
-        start_mins_list = [m.strip().strip('"') for m in start_mins_str.split(',') if m.strip()]
-        
-        # Validate 0–59
-        minute_values = []
-        for m in start_mins_list:
-            try:
-                val = int(m)
-                if 0 <= val <= 59:
-                    minute_values.append(str(val))
-                else:
-                    raise ValueError
-            except ValueError:
-                raise ValueError(f"Invalid minute value '{m}' in start_mins.")
-        
-        minute_str = ','.join(minute_values)
-        hour_str = '*'
-        dow_str = self._convert_days_of_week(days_of_week)
-        return f"{minute_str} {hour_str} * * {dow_str}"
-
-    def _parse_time(self, start_time: str) -> tuple:
-        """Parse time string and return (hour, minute) tuple"""
-        start_time = start_time.strip().strip('"')
-        if ':' in start_time:
-            hour, minute = start_time.split(':')
-            hour = int(hour)
-            minute = int(minute)
-        else:
-            if len(start_time) == 4:
-                hour = int(start_time[:2])
-                minute = int(start_time[2:])
-            else:
-                hour = int(start_time)
-                minute = 0
-        return hour, minute
-
-    def _convert_days_of_week(self, days_of_week: List[str]) -> str:
-        """Convert days of week from Autosys format to cron"""
-        dow_map = {
-            'su': '0', 'mo': '1', 'tu': '2', 'we': '3', 
-            'th': '4', 'fr': '5', 'sa': '6',
-            'sun': '0', 'mon': '1', 'tue': '2', 'wed': '3',
-            'thu': '4', 'fri': '5', 'sat': '6'
-        }
-        
-        if days_of_week:
-            cron_days = []
-            for day in days_of_week:
-                day_lower = day.lower().strip()
-                if day_lower in dow_map:
-                    cron_days.append(dow_map[day_lower])
-            return ','.join(cron_days) if cron_days else '*'
-        return '*'
-
-    def _convert_single_time_to_cron(self, start_time: str, days_of_week: List[str]) -> str:
-        """Convert single Autosys time to cron expression"""
-        hour, minute = self._parse_time(start_time)
-        dow_str = self._convert_days_of_week(days_of_week)
-        return f"{minute} {hour} * * {dow_str}"

@@ -13,7 +13,7 @@ import os
 from typing import Dict
 from autosys_job import AutosysJob
 from  utils.external_dep_utils import ExternalDepUtils
-from utils.schedule_utils import ScheduleUtils
+from utils.converter_utils import Utils
 
 # ----------------------------------------
 # Session Init
@@ -61,60 +61,12 @@ def substitute_env_vars(command: str, env_vars: dict) -> str:
         return env_vars.get(var_name, match.group(0))
     return re.sub(r'\$(\w+)|\$\{(\w+)\}', replacer, command)
 
-def build_box_hierarchy(jobs: Dict[str, AutosysJob]) -> Dict[str, Dict]:
-    """Build hierarchy of box jobs and their contained jobs with nesting support"""
-    hierarchy = {}
-        
-    # First pass: identify all box jobs and their direct children
-    for job_name, job in jobs.items():
-        if job.is_box_job():
-            hierarchy[job_name] = {
-                'job': job,
-                'children': [],
-                'parent': None,
-                'level': 0
-            }
-        
-    # Second pass: assign children to their parent boxes
-    for job_name, job in jobs.items():
-        if job.box_name and job.box_name in hierarchy:
-            hierarchy[job.box_name]['children'].append(job_name)
-                
-            # If this child is also a box, set its parent
-            if job.is_box_job() and job_name in hierarchy:
-                hierarchy[job_name]['parent'] = job.box_name
-        
-    # Third pass: calculate nesting levels
-    def calculate_level(box_name, visited=None):
-        if visited is None:
-            visited = set()
-            
-        if box_name in visited:
-            return 0  # Circular reference protection
-            
-        visited.add(box_name)
-            
-        if hierarchy[box_name]['parent'] is None:
-            hierarchy[box_name]['level'] = 0
-        else:
-            parent_level = calculate_level(hierarchy[box_name]['parent'], visited)
-            hierarchy[box_name]['level'] = parent_level + 1
-            
-        visited.remove(box_name)
-        return hierarchy[box_name]['level']
-        
-    # Calculate levels for all boxes
-    for box_name in hierarchy:
-        calculate_level(box_name)
-        
-    return hierarchy
-
 def get_prefixed_job_names(jobs: Dict[str, AutosysJob]) -> Dict[str, str]:
     """
     Return a dict mapping job_name -> fully prefixed name 
     including nested box hierarchy.
     """
-    hierarchy = build_box_hierarchy(jobs)
+    hierarchy = Utils.build_box_hierarchy(jobs)
     prefixed_names: Dict[str, str] = {}
 
     def build_prefix(job_name: str) -> str:
@@ -506,7 +458,7 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
         }).apply(lambda x: ['background-color: #eef6ff' if i % 2 == 0 else '' for i in range(len(x))], axis=0)
     st.dataframe(style_table(df), use_container_width=True)
     #extract schedule of the downstream job
-    st.session_state.downstream_jil_schedule = ScheduleUtils.determine_schedule_interval(st.session_state.jobs_dict)
+    st.session_state.downstream_jil_schedule = Utils.determine_schedule_interval(st.session_state.jobs_dict)
 
     option = st.radio("Choose option to handle external dependency",
                       ["Merge - This will merge all the uploaded JIL files into a single Dag",

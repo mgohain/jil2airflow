@@ -1,6 +1,54 @@
 from typing import Dict, List
 from autosys_job import AutosysJob
-class ScheduleUtils:
+class Utils:
+    @staticmethod    
+    def build_box_hierarchy(jobs: Dict[str, AutosysJob]) -> Dict[str, Dict]:
+        """Build hierarchy of box jobs and their contained jobs with nesting support"""
+        hierarchy = {}
+        
+        # First pass: identify all box jobs and their direct children
+        for job_name, job in jobs.items():
+            if job.is_box_job():
+                hierarchy[job_name] = {
+                    'job': job,
+                    'children': [],
+                    'parent': None,
+                    'level': 0
+                }
+        
+        # Second pass: assign children to their parent boxes
+        for job_name, job in jobs.items():
+            if job.box_name and job.box_name in hierarchy:
+                hierarchy[job.box_name]['children'].append(job_name)
+                
+                # If this child is also a box, set its parent
+                if job.is_box_job() and job_name in hierarchy:
+                    hierarchy[job_name]['parent'] = job.box_name
+        
+        # Third pass: calculate nesting levels
+        def calculate_level(box_name, visited=None):
+            if visited is None:
+                visited = set()
+            
+            if box_name in visited:
+                return 0  # Circular reference protection
+            
+            visited.add(box_name)
+            
+            if hierarchy[box_name]['parent'] is None:
+                hierarchy[box_name]['level'] = 0
+            else:
+                parent_level = calculate_level(hierarchy[box_name]['parent'], visited)
+                hierarchy[box_name]['level'] = parent_level + 1
+            
+            visited.remove(box_name)
+            return hierarchy[box_name]['level']
+        
+        # Calculate levels for all boxes
+        for box_name in hierarchy:
+            calculate_level(box_name)
+        
+        return hierarchy    
     @staticmethod
     def determine_schedule_interval(jobs: Dict[str, AutosysJob]) -> str:
         """Determine schedule interval from job start times, start mins, and date conditions"""
@@ -21,12 +69,12 @@ class ScheduleUtils:
                 raise ValueError(f"Job {job.job_name} has both start_times and start_mins defined, which is not allowed.")
             
             if job.start_times:
-                cron_schedule = ScheduleUtils.convert_autosys_schedule_to_cron(job.start_times, job.days_of_week)
+                cron_schedule = Utils.convert_autosys_schedule_to_cron(job.start_times, job.days_of_week)
                 if cron_schedule:
                     return f"'{cron_schedule}'"
             
             elif job.start_mins:
-                cron_schedule = ScheduleUtils.convert_start_mins_to_cron(job.start_mins, job.days_of_week)
+                cron_schedule = Utils.convert_start_mins_to_cron(job.start_mins, job.days_of_week)
                 if cron_schedule:
                     return f"'{cron_schedule}'"
         
@@ -42,7 +90,7 @@ class ScheduleUtils:
         minutes = []
         
         for time_str in start_times:
-            hour, minute = ScheduleUtils.parse_time(time_str)
+            hour, minute = Utils.parse_time(time_str)
             hours.append(str(hour))
             minutes.append(str(minute))
         
@@ -51,9 +99,9 @@ class ScheduleUtils:
             hour_str = ','.join(hours)
         else:
             # Different minutes — just take the first time
-            return ScheduleUtils.convert_single_time_to_cron(start_times[0], days_of_week)
+            return Utils.convert_single_time_to_cron(start_times[0], days_of_week)
         
-        dow_str = ScheduleUtils.convert_days_of_week(days_of_week)
+        dow_str = Utils.convert_days_of_week(days_of_week)
         return f"{minute_str} {hour_str} * * {dow_str}"
     
     @staticmethod
@@ -76,7 +124,7 @@ class ScheduleUtils:
         
         minute_str = ','.join(minute_values)
         hour_str = '*'
-        dow_str = ScheduleUtils.convert_days_of_week(days_of_week)
+        dow_str = Utils.convert_days_of_week(days_of_week)
         return f"{minute_str} {hour_str} * * {dow_str}"
     
     @staticmethod
@@ -118,6 +166,6 @@ class ScheduleUtils:
     @staticmethod
     def _convert_single_time_to_cron(start_time: str, days_of_week: List[str]) -> str:
         """Convert single Autosys time to cron expression"""
-        hour, minute = ScheduleUtils.parse_time(start_time)
-        dow_str = ScheduleUtils.convert_days_of_week(days_of_week)
+        hour, minute = Utils.parse_time(start_time)
+        dow_str = Utils.convert_days_of_week(days_of_week)
         return f"{minute} {hour} * * {dow_str}"
