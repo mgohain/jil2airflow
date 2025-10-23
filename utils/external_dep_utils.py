@@ -30,22 +30,22 @@ class ExternalDepUtils:
         print(f"external dependency :: {external_to_jobs}")
         return dict(external_to_jobs)
     @staticmethod    
-    def generate_external_dependency_tasks(ext_deps, dag_info_of_external_deps) -> str:
+    def generate_external_dependency_tasks(external_task_to_dependent_task_map: Dict[str, str], external_task_to_dag_id_map: Dict[str, str]) -> str:
         external_task_name_prefix = "wait_for_"
-        for ext_task, task_details in dag_info_of_external_deps.items():
+        for ext_task, dag_id in external_task_to_dag_id_map.items():
             print("--------------------------Debug-------------")
-            if task_details is None:
+            if dag_id is None:
                 raise ValueError(f"External dependency task '{ext_task}' not found in Airflow.")
 
             else:
-                print(f"{ext_task} -> {task_details.get('dag_id')}")
+                print(f"{ext_task} -> {dag_id}")
         ext_task_defs = "\n\n".join(
-            ExternalDepUtils.generate_external_task_sensor(ext_task, task_details['dag_id'], external_task_name_prefix)
-            for ext_task, task_details in dag_info_of_external_deps.items()
+            ExternalDepUtils.generate_external_task_sensor(ext_task, dag_id, external_task_name_prefix)
+            for ext_task, dag_id in external_task_to_dag_id_map.items()
         )
         dependency_lines = [
-            f"{external_task_name_prefix}{upstream} >> {downstream}"
-            for upstream, downstream_list in ext_deps.items()
+            f"{external_task_name_prefix}{upstream.split('.')[-1]} >> {downstream}"
+            for upstream, downstream_list in external_task_to_dependent_task_map.items()
             for downstream in downstream_list
         ]
         # Join into one string with newlines
@@ -58,7 +58,7 @@ class ExternalDepUtils:
         ext_task_id_without_prefix = external_task_id.split(".")[-1]
         task_def = f"""
 {indent_str}{external_task_name_prefix}{ext_task_id_without_prefix} = ExternalTaskSensor(
-{indent_str}    task_id = 'wait_for_{ext_task_id_without_prefix}',          
+{indent_str}    task_id = '{external_task_name_prefix}{ext_task_id_without_prefix}',          
 {indent_str}    external_dag_id = '{external_dag_id}',         # DAG to wait for
 {indent_str}    external_task_id = '{external_task_id}',       # Task to wait for 
 {indent_str}    poke_interval = 30,                            # check every 30s

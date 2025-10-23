@@ -7,16 +7,31 @@ import json
 from collections import defaultdict
 import re
 from utils.timezone_map import TIMEZONE_MAP
+from utils.external_dep_utils import ExternalDepUtils
 
 class AirflowDAGGenerator:
     """Generates Airflow DAG from parsed Autosys jobs"""
     
-    def __init__(self, jobs: Dict[str, AutosysJob]):
+    def __init__(self, jobs: Dict[str, AutosysJob],  ext_dep_list: list, dep_seq_info: str, schedule: str,
+                 external_task_to_dependent_task_map: Dict[str, str], external_task_to_dag_id_map: Dict[str, str],
+                 downstream_jil_schedule: str, handle_ext_ref=False):
         self.jobs = jobs
         self.box_hierarchy = self._build_box_hierarchy()
         self.status_failure = "failure"
         self.status_retry = "retry"
-        
+        self.ext_dep_list = ext_dep_list
+        self.dep_seq_info = dep_seq_info
+        self.handle_ext_ref = handle_ext_ref
+        self.schedule = schedule
+        self.external_task_to_dependent_task_map = external_task_to_dependent_task_map
+        self.external_task_to_dag_id_map = external_task_to_dag_id_map
+        self.downstream_jil_schedule = downstream_jil_schedule
+
+    def _generate_external_task_sensor_indicator(self) -> bool:
+        if self.handle_ext_ref and self.dep_seq_info == "downstream" and self.ext_dep_list and self.downstream_jil_schedule != "None":
+            return True
+        return False
+    
     def _build_box_hierarchy(self) -> Dict[str, Dict]:
         """Build hierarchy of box jobs and their contained jobs with nesting support"""
         hierarchy = {}
@@ -81,13 +96,20 @@ class AirflowDAGGenerator:
         else:
             # If schedule provided as argument, format it properly
             schedule_interval = repr(schedule_interval)
-
+        print(f"Outside::::::::::::::::cheking indicator:: {schedule_interval.strip("'")}")
+        if self.handle_ext_ref == True and schedule_interval.strip("'") == "None":
+            if self.dep_seq_info == "downstream":
+                schedule_interval = f'[{", ".join([f"Dataset(\'{job}\')" for job in self.ext_dep_list])}]'
         imports = self._generate_imports()
         dag_definition = self._generate_dag_definition(dag_id, schedule_interval)
         callbacks = self._generate_callbacks()
         tasks = self._generate_tasks()
         dependencies = self._generate_dependencies()
-        dag_code = f"{imports}\n\n{dag_definition}\n\n{callbacks}\n\n{tasks}\n\n{dependencies}"
+        if self._generate_external_task_sensor_indicator():
+            external_dependecies = ExternalDepUtils.generate_external_dependency_tasks(self.external_task_to_dependent_task_map, self.external_task_to_dag_id_map)
+            dag_code = f"{imports}\n\n{dag_definition}\n\n{callbacks}\n\n{tasks}\n\n{external_dependecies}\n\n{dependencies}"
+        else:
+            dag_code = f"{imports}\n\n{dag_definition}\n\n{callbacks}\n\n{tasks}\n\n{dependencies}"
         #return dag_code
         with open("generated_dag.py", "w") as f:
             f.write(dag_code)
@@ -114,7 +136,7 @@ class AirflowDAGGenerator:
         if dag_id not in dags:
             return f"[DAG VALIDATION FAILED]\nDAG '{dag_id}' not found in parsed DAGs."
         return dag_code
-    
+
     def _get_required_imports(self) -> set:
         """Determine which operator imports are needed based on job types"""
         imports = {
@@ -173,7 +195,8 @@ class AirflowDAGGenerator:
         if has_k8s:
             imports.add("from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator")
         if has_file_sensor:
-            imports.add("from custom_operators.profile_aware_file_sensor import ProfileAwareFileSensor")
+            #imports.add("from airflow.providers.sftp.sensors.sftp import SFTPSensor")
+            imports.add("from custom_operators.profile_aware_sftp_sensor import ProfileAwareSftpSensor")
         if has_calendar:
             imports.add("from airflow.timetables.base import Timetable")
             imports.add("from calendars.calendars import *")
@@ -183,6 +206,9 @@ class AirflowDAGGenerator:
             imports.add("import pendulum")
         if has_sql:
             imports.add("from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator")
+        if self.handle_ext_ref:
+            imports.add("from airflow import Dataset")
+            imports.add("from airflow.sensors.external_task import ExternalTaskSensor")
         return imports
 
     def _generate_imports(self) -> str:
@@ -273,26 +299,6 @@ class AirflowDAGGenerator:
 """
         return func_def.strip("\n")
     
-    def _extract_external_dependency_to_job_mapping(self) -> dict:
-        """
-        Return a mapping of external_job -> list of jobs that depend on it.
-        """
-        dep_pattern = re.compile(r'(success|failure|done|notrunning|terminated)\(([^)]+)\)', re.IGNORECASE)
-        defined_jobs = set()
-        for job in self.jobs.values():
-            defined_jobs.add(job.name)
-        external_to_jobs = defaultdict(list)
-        for job in self.jobs.values():
-            if not job.condition:
-                continue
-            norm_condition = ConditionParser.normalize_condition(job.condition)
-            for _, dep_job in dep_pattern.findall(norm_condition):
-                dep_job = dep_job.strip()
-                if dep_job not in defined_jobs:
-                    external_to_jobs[dep_job].append(job.name)
-        print(f"external dependency :: {external_to_jobs}")
-        return dict(external_to_jobs)
-
 
     def _generate_tasks(self) -> str:
         """Generate all task definitions with nested box support"""
@@ -601,7 +607,7 @@ class AirflowDAGGenerator:
         """Generate file sensor task"""
         filepath = job.watch_file
         indent_str = " " * indent 
-        fs_conn_id = job.fs_conn_id if job.fs_conn_id else "fs_default"
+        fs_conn_id = job.fs_conn_id if job.fs_conn_id else job.machine
         poke_interval = job.watch_interval if job.watch_interval else 60
         ##------------------New Features---------------
         retries = getattr(job, "n_retrys", 0)
@@ -641,7 +647,7 @@ class AirflowDAGGenerator:
         attributes.append(f"{indent_str}    dag=dag,")
 
         task_def = f"""
-{indent_str}{job.name} = ProfileAwareFileSensor(
+{indent_str}{job.name} = ProfileAwareSftpSensor(
 {chr(10).join([a for a in attributes if a])}
 {indent_str})
 """   
@@ -681,7 +687,17 @@ class AirflowDAGGenerator:
             common_attributes.append(f"{indent_str}    on_failure_callback=notify_{self.status_failure},")
         if term_run_time > 0:
             common_attributes.append(f"{indent_str}    execution_timeout=timedelta(minutes={term_run_time}),")
-        
+        print("------------------------point 8------------------")
+        print(f"external dependency list:: {self.ext_dep_list}")
+        print(f"dep_seq info:: {self.dep_seq_info}")
+        print(self.handle_ext_ref)
+
+        if self.handle_ext_ref and self.dep_seq_info == "upstream" and self.downstream_jil_schedule == "None":
+            dataset_name = ""
+            for ext_dep_task in self.ext_dep_list:
+                if job.name == ext_dep_task:
+                    dataset_name = ext_dep_task
+                    common_attributes.append(f"{indent_str}    outlets=[Dataset('{dataset_name}')],")
         resolved_cmd = job.command
         # Append stdout/stderr redirection if present
         if getattr(job, "std_out_file", None):
