@@ -39,7 +39,6 @@ def show_single_dag_configurator():
                         job.ssh_conn_id = st.text_input("SSH Connection ID", value=job.ssh_conn_id or job.machine or "ssh_default", key=f"ssh_{job.name}")
                         envvars = st.text_input("Environment (JSON)", value=json.dumps(job.envvars), key=f"env_{job.name}")
                         job.envvars = json.loads(envvars) if envvars else {}
-                print(f"*****{job.operator_type}")
             if job.is_file_watcher():
                 job.fs_conn_id = st.text_input("Filesystem Connection ID", value=job.fs_conn_id or job.machine or "fs_default", key=f"fsid_{job.name}")
                 job.watch_interval = st.number_input("Watch Interval (seconds)", value=job.watch_interval, key=f"watch_interval_{job.name}")
@@ -49,7 +48,7 @@ def show_single_dag_configurator():
     st.session_state.schedule = st.text_input("Schedule Interval", value=st.session_state.schedule)
 
     if st.button("🚀 Generate DAG"):
-        generator =  AirflowDAGGenerator(jobs_dict, {}, None, st.session_state.schedule, {}, {},
+        generator =  AirflowDAGGenerator(jobs_dict, {}, None, st.session_state.schedule, {}, {}, {},
                                          st.session_state.downstream_jil_schedule, st.session_state.handle_ext_ref)
         dag_code = generator.generate_dag(st.session_state.dag_id, st.session_state.schedule)
         st.session_state.dag_code = dag_code

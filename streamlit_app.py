@@ -275,33 +275,30 @@ elif st.session_state.step == 1 and st.session_state.mode == "batch":
         #extracting fully qualified job name
         external_job_to_dependent_map = next(iter(st.session_state.ext_dep_dict.values()), {})
         external_task_to_dag_id_map = {}
+        dag_id_to_schedule_map = {}
         for fname, jobs_dict in st.session_state.batch_jobs_dicts.items():
             dag_id = f"{fname.split('.')[0]}"
+            schedule = Utils.determine_schedule_interval(jobs_dict)
+            dag_id_to_schedule_map[dag_id] = schedule
             if st.session_state.handle_ext_ref:
                 full_job_names = get_prefixed_job_names(jobs_dict)
-                print("session_state.ext_dep_dict")
-                print(full_job_names)
-                print(st.session_state.ext_dep_dict)
                 for job_name, job in jobs_dict.items():
                     if job_name in external_job_to_dependent_map.keys():
-                        print(f"job name-:::- {job_name}")
                         external_task_to_dag_id_map[full_job_names.get(job_name, job_name)] = dag_id
                 external_job_to_dependent_map = {
                     full_job_names.get(job, job): deps
                     for job, deps in external_job_to_dependent_map.items()
-                    }
-                print(f"external jobs to task map :: {external_job_to_dependent_map}")
-                print(f"external_task_to_dag_id_map :: {external_task_to_dag_id_map}")
+                    }     
         for fname, jobs_dict in st.session_state.batch_jobs_dicts.items():
             dag_id = f"{fname.split('.')[0]}"
             if st.session_state.handle_ext_ref:
                 dag_code = AirflowDAGGenerator(jobs_dict, [job for sublist in st.session_state.ext_dep_dict.values() for job in sublist],
                                            st.session_state.dep_info.get(fname, None), st.session_state.schedule,
-                                           external_job_to_dependent_map, external_task_to_dag_id_map, st.session_state.downstream_jil_schedule,
+                                           external_job_to_dependent_map, external_task_to_dag_id_map, dag_id_to_schedule_map, st.session_state.downstream_jil_schedule,
                                            st.session_state.handle_ext_ref).generate_dag(dag_id, st.session_state.schedule)
             else:
                 dag_code = AirflowDAGGenerator(jobs_dict, {}, None, st.session_state.schedule,
-                                           {}, {}, st.session_state.downstream_jil_schedule, False).generate_dag(dag_id, st.session_state.schedule)
+                                           {}, {}, {}, st.session_state.downstream_jil_schedule, False).generate_dag(dag_id, st.session_state.schedule)
             st.session_state.batch_dags[fname] = {
                 "dag_id": dag_id,
                 "code": dag_code,
@@ -426,7 +423,7 @@ elif st.session_state.step == -1 and st.session_state.mode == "batch":
             'border-style': 'solid',
             'padding': '5px'
         }).apply(lambda x: ['background-color: #eef6ff' if i % 2 == 0 else '' for i in range(len(x))], axis=0)
-    st.dataframe(style_table(df), use_container_width=True)
+    st.dataframe(style_table(df), width='stretch')
     st.error("⚠️ Remove files having external dependency!")
     if st.button("🔄 Restart Wizard", key="step_minus1_restart"):
         env_vars = st.session_state.get("env_vars", {})
@@ -456,7 +453,7 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
             'border-style': 'solid',
             'padding': '5px'
         }).apply(lambda x: ['background-color: #eef6ff' if i % 2 == 0 else '' for i in range(len(x))], axis=0)
-    st.dataframe(style_table(df), use_container_width=True)
+    st.dataframe(style_table(df), width='stretch')
     #extract schedule of the downstream job
     st.session_state.downstream_jil_schedule = Utils.determine_schedule_interval(st.session_state.jobs_dict)
 

@@ -14,7 +14,7 @@ class AirflowDAGGenerator:
     """Generates Airflow DAG from parsed Autosys jobs"""
     
     def __init__(self, jobs: Dict[str, AutosysJob],  ext_dep_list: list, dep_seq_info: str, schedule: str,
-                 external_task_to_dependent_task_map: Dict[str, str], external_task_to_dag_id_map: Dict[str, str],
+                 external_task_to_dependent_task_map: Dict[str, str], external_task_to_dag_id_map: Dict[str, str], dag_id_to_schedule_map: Dict[str, str],
                  downstream_jil_schedule: str, handle_ext_ref=False):
         self.jobs = jobs
         self.box_hierarchy = Utils.build_box_hierarchy(self.jobs)
@@ -27,6 +27,7 @@ class AirflowDAGGenerator:
         self.external_task_to_dependent_task_map = external_task_to_dependent_task_map
         self.external_task_to_dag_id_map = external_task_to_dag_id_map
         self.downstream_jil_schedule = downstream_jil_schedule
+        self.dag_id_to_schedule_map = dag_id_to_schedule_map
 
     def _generate_external_task_sensor_indicator(self) -> bool:
         if self.handle_ext_ref and self.dep_seq_info == "downstream" and self.ext_dep_list and self.downstream_jil_schedule != "None":
@@ -50,7 +51,7 @@ class AirflowDAGGenerator:
         else:
             # If schedule provided as argument, format it properly
             schedule_interval = repr(schedule_interval)
-        print(f"Outside::::::::::::::::cheking indicator:: {schedule_interval.strip("'")}")
+
         if self.handle_ext_ref == True and schedule_interval.strip("'") == "None":
             if self.dep_seq_info == "downstream":
                 schedule_interval = f'[{", ".join([f"Dataset(\'{job}\')" for job in self.ext_dep_list])}]'
@@ -60,7 +61,8 @@ class AirflowDAGGenerator:
         tasks = self._generate_tasks()
         dependencies = self._generate_dependencies()
         if self._generate_external_task_sensor_indicator():
-            external_dependecies = ExternalDepUtils.generate_external_dependency_tasks(self.external_task_to_dependent_task_map, self.external_task_to_dag_id_map)
+            external_dependecies = ExternalDepUtils.generate_external_dependency_tasks(
+                self.external_task_to_dependent_task_map,self.external_task_to_dag_id_map, self.downstream_jil_schedule.strip("'"), self.dag_id_to_schedule_map)
             dag_code = f"{imports}\n\n{dag_definition}\n\n{callbacks}\n\n{tasks}\n\n{external_dependecies}\n\n{dependencies}"
         else:
             dag_code = f"{imports}\n\n{dag_definition}\n\n{callbacks}\n\n{tasks}\n\n{dependencies}"
@@ -456,7 +458,7 @@ class AirflowDAGGenerator:
         return task_group_def
 
     def _generate_task_group_dependencies(self, children: list, indent: int = 4) -> str:
-        print("Here!")
+
         """Generate task dependencies within the task group with nested support"""
         dependencies = []
         indent_str = ""
@@ -494,7 +496,6 @@ class AirflowDAGGenerator:
                 for dep in deps:
                     # Only include dependencies that are within the same task group
                     if dep in children:
-                        print(f"xyz {dep}")
                         dep_task_ref = self._get_task_reference_within_group(dep, children)
                         job_deps.append(dep_task_ref)
             print(f"job_deps: {job_deps}")
@@ -641,11 +642,7 @@ class AirflowDAGGenerator:
             common_attributes.append(f"{indent_str}    on_failure_callback=notify_{self.status_failure},")
         if term_run_time > 0:
             common_attributes.append(f"{indent_str}    execution_timeout=timedelta(minutes={term_run_time}),")
-        print("------------------------point 8------------------")
         print(f"external dependency list:: {self.ext_dep_list}")
-        print(f"dep_seq info:: {self.dep_seq_info}")
-        print(self.handle_ext_ref)
-
         if self.handle_ext_ref and self.dep_seq_info == "upstream" and self.downstream_jil_schedule == "None":
             dataset_name = ""
             for ext_dep_task in self.ext_dep_list:
@@ -662,8 +659,6 @@ class AirflowDAGGenerator:
         env_vars = "{}"
         if job.envvars:
             env_vars = json.dumps(job.envvars)
-        print("*"*5)
-        print(getattr(job, "operator_type", "KubernetesPodOperator"))
         if getattr(job, "operator_type", "KubernetesPodOperator") == "KubernetesPodOperator":
             # Determine if command is bash or python
             is_python = (job.command.startswith('python') or 
@@ -746,7 +741,6 @@ class AirflowDAGGenerator:
                 command = repr(f"bash -c '. {job.profile} && {resolved_cmd}'")
             else:
                 command = repr(resolved_cmd)
-            print(command)
 
             attributes = [
                 f"{indent_str}    task_id='{task_id}',",
@@ -778,7 +772,6 @@ class AirflowDAGGenerator:
             else:
                 # Static value already cast in parser
                 rendered_params[param_name] = value
-                print(f"rendered_params {rendered_params}")
         return f"""
 {indent_str}    sql=f"CALL {job.sp_name}({', '.join([f'%({p})s' for p in rendered_params.keys()])})",
 {indent_str}    parameters={rendered_params},

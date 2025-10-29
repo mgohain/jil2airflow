@@ -159,7 +159,6 @@ class JILParser:
             self._resolve_sp_params(value)
 
     def _resolve_sp_params(self, value: str) -> dict:
-        print(value)
         parts = [p.strip() for p in value.split(",")]
         arg_dict = {}
         for p in parts:
