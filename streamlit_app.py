@@ -458,8 +458,8 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
     st.session_state.downstream_jil_schedule = Utils.determine_schedule_interval(st.session_state.jobs_dict)
 
     option = st.radio("Choose option to handle external dependency",
-                      ["Merge - This will merge all the uploaded JIL files into a single Dag",
-                       "Separate - This will generate separate Dag for each uploaded JIL files"])
+                      ["Separate - This will generate separate Dag for each uploaded JIL files",
+                      "Merge - This will merge all the uploaded JIL files into a single Dag"])
     st.session_state.ext_option = "merge" if "Merge" in option else "separate"
     ext_files = st.file_uploader("Upload JIL files containing definition of external jobs", type=["jil", "txt"], accept_multiple_files=True, key="step9_file_uploader")
     st.subheader("Uploaded JIL files:")

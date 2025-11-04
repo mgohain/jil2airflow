@@ -659,45 +659,8 @@ class AirflowDAGGenerator:
         env_vars = "{}"
         if job.envvars:
             env_vars = json.dumps(job.envvars)
-        if getattr(job, "operator_type", "KubernetesPodOperator") == "KubernetesPodOperator":
-            # Determine if command is bash or python
-            is_python = (job.command.startswith('python') or 
-                        job.command.endswith('.py') or 
-                        'python' in job.command.lower())
-            
-            if job.command_image:
-                image = job.command_image
-            else:
-                image = "python:3.9-slim" if is_python else "ubuntu:20.04"
-            
-            # Prepare command for execution
-            if ">" in resolved_cmd or "|" in resolved_cmd:
-                cmd = ["/bin/bash", "-c", resolved_cmd]
-            elif is_python:
-                cmd = job.command.split(" ")
-            else:
-                cmd = ["/bin/bash", "-c", resolved_cmd]
-
-            attributes = [
-                f"{indent_str}    task_id='{task_id}',",
-                f"{indent_str}    name='{task_id}',",
-                f"{indent_str}    namespace='default',",
-                f"{indent_str}    image='{image}',",
-                f"{indent_str}    cmds={cmd[0:1]},",
-                f"{indent_str}    arguments={cmd[1:] if len(cmd) > 1 else []},",
-                f"{indent_str}    env_vars={env_vars},",
-                f"{indent_str}    is_delete_operator_pod=True,",
-                f"{indent_str}    get_logs=True,",
-            ]
-            attributes.extend(common_attributes)
-            attributes.append(f"{indent_str}    dag=dag,")
-
-            return f"""
-{indent_str}{task_id} = KubernetesPodOperator(
-{chr(10).join([a for a in attributes if a])}
-{indent_str})
-"""     
-        elif getattr(job, "job_type", "SQL").upper() == "SQL":
+     
+        if getattr(job, "job_type", "SQL").upper() == "SQL":
             sql_command = job.sql_command
             if sql_command.startswith(("'", '"')) and sql_command.endswith(("'", '"')):
                 sql_command = sql_command[1:-1].strip()
@@ -736,6 +699,44 @@ class AirflowDAGGenerator:
 {chr(10).join([a for a in attributes if a])}
 {indent_str})
 """
+        elif getattr(job, "operator_type", "KubernetesPodOperator") == "KubernetesPodOperator":
+            # Determine if command is bash or python
+            is_python = (job.command.startswith('python') or 
+                        job.command.endswith('.py') or 
+                        'python' in job.command.lower())
+            
+            if job.command_image:
+                image = job.command_image
+            else:
+                image = "python:3.9-slim" if is_python else "ubuntu:20.04"
+            
+            # Prepare command for execution
+            if ">" in resolved_cmd or "|" in resolved_cmd:
+                cmd = ["/bin/bash", "-c", resolved_cmd]
+            elif is_python:
+                cmd = job.command.split(" ")
+            else:
+                cmd = ["/bin/bash", "-c", resolved_cmd]
+
+            attributes = [
+                f"{indent_str}    task_id='{task_id}',",
+                f"{indent_str}    name='{task_id}',",
+                f"{indent_str}    namespace='default',",
+                f"{indent_str}    image='{image}',",
+                f"{indent_str}    cmds={cmd[0:1]},",
+                f"{indent_str}    arguments={cmd[1:] if len(cmd) > 1 else []},",
+                f"{indent_str}    env_vars={env_vars},",
+                f"{indent_str}    is_delete_operator_pod=True,",
+                f"{indent_str}    get_logs=True,",
+            ]
+            attributes.extend(common_attributes)
+            attributes.append(f"{indent_str}    dag=dag,")
+
+            return f"""
+{indent_str}{task_id} = KubernetesPodOperator(
+{chr(10).join([a for a in attributes if a])}
+{indent_str})
+"""        
         else:
             if job.profile:
                 command = repr(f"bash -c '. {job.profile} && {resolved_cmd}'")
