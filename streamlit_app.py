@@ -10,7 +10,10 @@ import re
 from summary_and_visualization import show_summary_and_dag
 from dag_configurator import show_single_dag_configurator
 import os
+from typing import Dict
+from autosys_job import AutosysJob
 from  utils.external_dep_utils import ExternalDepUtils
+from utils.converter_utils import Utils
 
 # ----------------------------------------
 # Session Init
@@ -30,15 +33,19 @@ def init_session():
         "dag_code": "",
         "dag_code_version": 0,
         "selected_dag_to_view": None,
-        "validation_failed": False,
         "ext_dep_dict": {},
         "ext_option": None,
         "jil_files_full_name": [],
-        "dep_info": {}
+        "dep_info": {},
+        "handle_ext_ref": False,
+        "downstream_jil_schedule": ""
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
+
+
+
 
 init_session()
 st.set_page_config(page_title="JIL to Airflow Wizard", layout="wide")
@@ -53,6 +60,37 @@ def substitute_env_vars(command: str, env_vars: dict) -> str:
         var_name = match.group(1) or match.group(2)
         return env_vars.get(var_name, match.group(0))
     return re.sub(r'\$(\w+)|\$\{(\w+)\}', replacer, command)
+
+def get_prefixed_job_names(jobs: Dict[str, AutosysJob]) -> Dict[str, str]:
+    """
+    Return a dict mapping job_name -> fully prefixed name 
+    including nested box hierarchy.
+    """
+    hierarchy = Utils.build_box_hierarchy(jobs)
+    prefixed_names: Dict[str, str] = {}
+
+    def build_prefix(job_name: str) -> str:
+        job = jobs[job_name]
+        if job.is_box_job() and job_name in hierarchy:
+            # If it's a box, build prefix from parent chain
+            parent = hierarchy[job_name]['parent']
+            if parent:
+                return f"{build_prefix(parent)}.{job_name}"
+            else:
+                return job_name
+        else:
+            # Regular job, include parent chain if exists
+            if job.box_name and job.box_name in hierarchy:
+                return f"{build_prefix(job.box_name)}.{job_name}"
+            else:
+                return job_name
+
+    # Compute prefix for every job
+    for job_name in jobs:
+        prefixed_names[job_name] = build_prefix(job_name)
+
+    return prefixed_names
+
 
 # ----------------------------------------
 # Sidebar for Environment Variables
@@ -144,7 +182,8 @@ if st.session_state.step == 0:
                 #------------------------------------------
                 ext_dep_to_job_map = ExternalDepUtils.extract_external_dependency_to_job_mapping(jobs)  
                 if ext_dep_to_job_map:
-                    ext_dep_dict[f.name] = list(ext_dep_to_job_map.keys())
+                    #ext_dep_dict[f.name] = list(ext_dep_to_job_map.keys())
+                    ext_dep_dict[f.name] = ext_dep_to_job_map
                 #-----------External dependency check ends
             except Exception as e:
                 st.error(f"❌ Error parsing {f.name}: {e}")	
@@ -158,7 +197,6 @@ if st.session_state.step == 0:
                 st.session_state.batch_jobs_dicts = parsed_files
             #------------------- Redirecting if external dependency found-------   
             if ext_dep_dict:
-                st.session_state.validation_failed = True
                 st.session_state.ext_dep_dict = ext_dep_dict
                 if st.session_state.mode == "batch":
                     st.session_state.step = -1
@@ -209,11 +247,11 @@ elif st.session_state.step == 1 and st.session_state.mode == "batch":
         resource_requests = st.text_input("Resource Requests", value="")
         resource_limits = st.text_input("Resource Limits", value="")
     elif operator_type == "SQLExecuteQueryOperator":
-        db_conn_id = st.text_input("DB Connection ID (defaults to job's machine attribute if present)", value="DEFAULT")
+        db_conn_id = st.text_input("DB Connection ID (defaults to job's machine attribute if present)")
         envvars = st.text_input("Environment (JSON)", value=json.dumps(st.session_state.env_vars))
     else:
         # For SSHOperator, show SSH Connection ID but default to machine attribute if present
-        ssh_conn_id = st.text_input("SSH Connection ID (defaults to job's machine attribute if present)", value="DEFAULT")
+        ssh_conn_id = st.text_input("SSH Connection ID (defaults to job's machine attribute if present)")
         envvars = st.text_input("Environment (JSON)", value=json.dumps(st.session_state.env_vars))
     #st.session_state.dag_id = st.text_input("Base DAG ID", value=st.session_state.dag_id)
     if st.button("Generate All DAGs 🚀"):
@@ -234,9 +272,33 @@ elif st.session_state.step == 1 and st.session_state.mode == "batch":
                     else:
                         job.ssh_conn_id = ssh_conn_id
                         job.envvars = json.loads(envvars)
+        #extracting fully qualified job name
+        external_job_to_dependent_map = next(iter(st.session_state.ext_dep_dict.values()), {})
+        external_task_to_dag_id_map = {}
+        dag_id_to_schedule_map = {}
         for fname, jobs_dict in st.session_state.batch_jobs_dicts.items():
             dag_id = f"{fname.split('.')[0]}"
-            dag_code = AirflowDAGGenerator(jobs_dict).generate_dag(dag_id, st.session_state.schedule)
+            schedule = Utils.determine_schedule_interval(jobs_dict)
+            dag_id_to_schedule_map[dag_id] = schedule
+            if st.session_state.handle_ext_ref:
+                full_job_names = get_prefixed_job_names(jobs_dict)
+                for job_name, job in jobs_dict.items():
+                    if job_name in external_job_to_dependent_map.keys():
+                        external_task_to_dag_id_map[full_job_names.get(job_name, job_name)] = dag_id
+                external_job_to_dependent_map = {
+                    full_job_names.get(job, job): deps
+                    for job, deps in external_job_to_dependent_map.items()
+                    }     
+        for fname, jobs_dict in st.session_state.batch_jobs_dicts.items():
+            dag_id = f"{fname.split('.')[0]}"
+            if st.session_state.handle_ext_ref:
+                dag_code = AirflowDAGGenerator(jobs_dict, [job for sublist in st.session_state.ext_dep_dict.values() for job in sublist],
+                                           st.session_state.dep_info.get(fname, None), st.session_state.schedule,
+                                           external_job_to_dependent_map, external_task_to_dag_id_map, dag_id_to_schedule_map, st.session_state.downstream_jil_schedule,
+                                           st.session_state.handle_ext_ref).generate_dag(dag_id, st.session_state.schedule)
+            else:
+                dag_code = AirflowDAGGenerator(jobs_dict, {}, None, st.session_state.schedule,
+                                           {}, {}, {}, st.session_state.downstream_jil_schedule, False).generate_dag(dag_id, st.session_state.schedule)
             st.session_state.batch_dags[fname] = {
                 "dag_id": dag_id,
                 "code": dag_code,
@@ -345,9 +407,23 @@ elif st.session_state.step == 3 and st.session_state.mode == "batch":
 # Step -1: External dependency handling in batch mode
 # ----------------------------------------
 elif st.session_state.step == -1 and st.session_state.mode == "batch":
-    st.error("⚠️ External dependency found!")
-    for fname, ext_dep_list in st.session_state.ext_dep_dict.items():
-        st.write(f"External dependency found: {ext_dep_list} in file {fname}")
+    import pandas as pd
+    st.header("⚠️ External dependency found!")
+    ext_dep_dict = st.session_state.ext_dep_dict
+    data = [{"File Name": fname, "External Dependencies": ", ".join(ext_dep_list) if ext_dep_list else "—"}
+            for fname, ext_dep_list in ext_dep_dict.items()]
+    df = pd.DataFrame(data)
+    # Apply zebra-striping style
+    def style_table(df):
+        return df.style.set_properties(**{
+            'background-color': '#f9f9f9',
+            'color': '#000',
+            'border-color': '#ddd',
+            'border-width': '1px',
+            'border-style': 'solid',
+            'padding': '5px'
+        }).apply(lambda x: ['background-color: #eef6ff' if i % 2 == 0 else '' for i in range(len(x))], axis=0)
+    st.dataframe(style_table(df), width='stretch')
     st.error("⚠️ Remove files having external dependency!")
     if st.button("🔄 Restart Wizard", key="step_minus1_restart"):
         env_vars = st.session_state.get("env_vars", {})
@@ -361,13 +437,32 @@ elif st.session_state.step == -1 and st.session_state.mode == "batch":
 # Step 9: External dependency handling in single mode
 # ----------------------------------------
 elif st.session_state.step == 9 and st.session_state.mode == "single":
-    st.error("⚠️ External dependency found!")
-    for fname, ext_dep_list in st.session_state.ext_dep_dict.items():
-        st.write(f"External dependency {ext_dep_list} found in file {fname}")
-    option = st.radio("Upload required JIL files", ["Merge - This will generate single Dag", "Separate - This will generate separate Dags"])
+    import pandas as pd
+    st.header("⚠️ External dependency found!")
+    ext_dep_dict = st.session_state.ext_dep_dict
+    data = [{"File Name": fname, "External Dependencies": ", ".join(ext_dep_list) if ext_dep_list else "—"}
+            for fname, ext_dep_list in ext_dep_dict.items()]
+    df = pd.DataFrame(data)
+    # Apply zebra-striping style
+    def style_table(df):
+        return df.style.set_properties(**{
+            'background-color': '#f9f9f9',
+            'color': '#000',
+            'border-color': '#ddd',
+            'border-width': '1px',
+            'border-style': 'solid',
+            'padding': '5px'
+        }).apply(lambda x: ['background-color: #eef6ff' if i % 2 == 0 else '' for i in range(len(x))], axis=0)
+    st.dataframe(style_table(df), width='stretch')
+    #extract schedule of the downstream job
+    st.session_state.downstream_jil_schedule = Utils.determine_schedule_interval(st.session_state.jobs_dict)
+
+    option = st.radio("Choose option to handle external dependency",
+                      ["Merge - This will merge all the uploaded JIL files into a single Dag",
+                       "Separate - This will generate separate Dag for each uploaded JIL files"])
     st.session_state.ext_option = "merge" if "Merge" in option else "separate"
-    ext_files = st.file_uploader("Upload JIL files", type=["jil", "txt"], accept_multiple_files=True, key="step9_file_uploader")
-    st.subheader("Already uploaded files:")
+    ext_files = st.file_uploader("Upload JIL files containing definition of external jobs", type=["jil", "txt"], accept_multiple_files=True, key="step9_file_uploader")
+    st.subheader("Uploaded JIL files:")
     for fname in st.session_state.jil_files_full_name:
         st.write(f"- {fname}")
     if ext_files:
@@ -413,7 +508,6 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
                 # ----------------------------------------
                 #ext_dep_to_job_map = ExternalDepUtils.extract_external_dependency_to_job_mapping(jobs)
                 #if st.session_state.ext_option == "separate" and ext_dep_to_job_map:
-                    #st.session_state.validation_failed = True
                     #st.session_state.validation_msg = f"⚠️ Job definition not found for '{' , '.join(ext_dep_to_job_map.keys())}' in JIL: '{f.name}'. \n\n Remove '{f.name}' from selection."
                     #st.session_state.step = -11
                     #st.rerun()
@@ -434,7 +528,6 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
                 # ----------------------------------------
                 #ext_dep_to_job_map = ExternalDepUtils.extract_external_dependency_to_job_mapping(st.session_state.jobs_dict)
                 #if ext_dep_to_job_map:
-                    #st.session_state.validation_failed = True
                     #st.session_state.validation_msg =f"⚠️ Job definition not found for '{' , '.join(ext_dep_to_job_map.keys())}' in JIL: '{' + '.join(parsed_files.keys())}'"
                     #st.session_state.step = 99
                     #st.rerun()                
@@ -450,9 +543,10 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
                     st.session_state.step = 1
                     if st.session_state.ext_option == "separate":
                         st.session_state.mode = "batch"
+                        st.session_state.handle_ext_ref = True
                     st.rerun()
             with cols[1]:
-                if st.button("🔄 Restart Wizard", key="step9_restart"):
+                if st.button("🔄 Restart Wizard", key="step9_restart_after_upload"):
                     env_vars = st.session_state.get("env_vars", {})
                     env_vars_list = st.session_state.get("env_vars_list", [])
                     #print(f"env_vars={env_vars} env_vars_list={env_vars_list}")
@@ -465,3 +559,13 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
         cols = st.columns([3, 1, 3])
         with cols[0]:
             st.button("Next ➡️", key="step0_next_nofile", disabled=True)
+        with cols[1]:
+            if st.button("🔄 Restart Wizard", key="step9_restart_before_upload"):
+                st.session_state.step = 1
+                env_vars = st.session_state.get("env_vars", {})
+                env_vars_list = st.session_state.get("env_vars_list", [])     
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.session_state.env_vars = env_vars
+                st.session_state.env_vars_list = env_vars_list
+                st.rerun()            

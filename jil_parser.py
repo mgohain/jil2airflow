@@ -8,7 +8,19 @@ class JILParser:
     def __init__(self):
         self.jobs: Dict[str, AutosysJob] = {}
         self.current_job: Optional[AutosysJob] = None
+        self.autosys_machine_to_airflow_conn_id_map = self.parse_autosys_machine_to_airflow_conn_id_map()
 
+    def parse_autosys_machine_to_airflow_conn_id_map(self) -> Dict[str, str]:
+        mapping = {}
+        with open("autosys_machine_to_airflow_conn_id_map.cfg", "r") as f:
+            for line in f:
+                line = line.strip()
+                # Skip empty lines or comment lines
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = map(str.strip, line.split("=", 1))
+                mapping[key] = value
+        return mapping        
     @staticmethod
     def parse_value(v):
         v = str(v).strip().lower()
@@ -72,7 +84,7 @@ class JILParser:
         elif key == 'command':
             job.command = value
         elif key == 'machine':
-            job.machine = value
+            job.machine = self.autosys_machine_to_airflow_conn_id_map.get(value, value)
         elif key == 'owner':
             job.owner = value
         elif key == 'permission':
@@ -147,7 +159,6 @@ class JILParser:
             self._resolve_sp_params(value)
 
     def _resolve_sp_params(self, value: str) -> dict:
-        print(value)
         parts = [p.strip() for p in value.split(",")]
         arg_dict = {}
         for p in parts:
@@ -155,7 +166,7 @@ class JILParser:
                 k, v = p.split("=", 1)
                 arg_dict[k.strip()] = v.strip()
 
-            #  Only process if it INPUT argument
+        #  Only process if it is INPUT argument
         if arg_dict.get("argtype", "").upper() == "OUT":
             return
         name = arg_dict.get("name")

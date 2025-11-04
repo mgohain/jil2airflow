@@ -7,63 +7,33 @@ import json
 from collections import defaultdict
 import re
 from utils.timezone_map import TIMEZONE_MAP
+from utils.external_dep_utils import ExternalDepUtils
+from utils.converter_utils import Utils
 
 class AirflowDAGGenerator:
     """Generates Airflow DAG from parsed Autosys jobs"""
     
-    def __init__(self, jobs: Dict[str, AutosysJob]):
+    def __init__(self, jobs: Dict[str, AutosysJob],  ext_dep_list: list, dep_seq_info: str, schedule: str,
+                 external_task_to_dependent_task_map: Dict[str, str], external_task_to_dag_id_map: Dict[str, str], dag_id_to_schedule_map: Dict[str, str],
+                 downstream_jil_schedule: str, handle_ext_ref=False):
         self.jobs = jobs
-        self.box_hierarchy = self._build_box_hierarchy()
+        self.box_hierarchy = Utils.build_box_hierarchy(self.jobs)
         self.status_failure = "failure"
         self.status_retry = "retry"
-        
-    def _build_box_hierarchy(self) -> Dict[str, Dict]:
-        """Build hierarchy of box jobs and their contained jobs with nesting support"""
-        hierarchy = {}
-        
-        # First pass: identify all box jobs and their direct children
-        for job_name, job in self.jobs.items():
-            if job.is_box_job():
-                hierarchy[job_name] = {
-                    'job': job,
-                    'children': [],
-                    'parent': None,
-                    'level': 0
-                }
-        
-        # Second pass: assign children to their parent boxes
-        for job_name, job in self.jobs.items():
-            if job.box_name and job.box_name in hierarchy:
-                hierarchy[job.box_name]['children'].append(job_name)
-                
-                # If this child is also a box, set its parent
-                if job.is_box_job() and job_name in hierarchy:
-                    hierarchy[job_name]['parent'] = job.box_name
-        
-        # Third pass: calculate nesting levels
-        def calculate_level(box_name, visited=None):
-            if visited is None:
-                visited = set()
-            
-            if box_name in visited:
-                return 0  # Circular reference protection
-            
-            visited.add(box_name)
-            
-            if hierarchy[box_name]['parent'] is None:
-                hierarchy[box_name]['level'] = 0
-            else:
-                parent_level = calculate_level(hierarchy[box_name]['parent'], visited)
-                hierarchy[box_name]['level'] = parent_level + 1
-            
-            visited.remove(box_name)
-            return hierarchy[box_name]['level']
-        
-        # Calculate levels for all boxes
-        for box_name in hierarchy:
-            calculate_level(box_name)
-        
-        return hierarchy
+        self.ext_dep_list = ext_dep_list
+        self.dep_seq_info = dep_seq_info
+        self.handle_ext_ref = handle_ext_ref
+        self.schedule = schedule
+        self.external_task_to_dependent_task_map = external_task_to_dependent_task_map
+        self.external_task_to_dag_id_map = external_task_to_dag_id_map
+        self.downstream_jil_schedule = downstream_jil_schedule
+        self.dag_id_to_schedule_map = dag_id_to_schedule_map
+
+    def _generate_external_task_sensor_indicator(self) -> bool:
+        if self.handle_ext_ref and self.dep_seq_info == "downstream" and self.ext_dep_list and self.downstream_jil_schedule != "None":
+            return True
+        return False
+    
 
     def generate_dag(self, dag_id: str, schedule_interval: str = None) -> str:
         """Generate complete Airflow DAG code and validate it using Airflow's DagBag."""
@@ -77,17 +47,25 @@ class AirflowDAGGenerator:
 
         # Extract scheduling info from jobs if not provided
         if not schedule_interval or schedule_interval == '' or schedule_interval.upper() == "DEFAULT":
-            schedule_interval = self._determine_schedule_interval()
+            schedule_interval = Utils.determine_schedule_interval(self.jobs)
         else:
             # If schedule provided as argument, format it properly
             schedule_interval = repr(schedule_interval)
 
+        if self.handle_ext_ref == True and schedule_interval.strip("'") == "None":
+            if self.dep_seq_info == "downstream":
+                schedule_interval = f'[{", ".join([f"Dataset(\'{job}\')" for job in self.ext_dep_list])}]'
         imports = self._generate_imports()
         dag_definition = self._generate_dag_definition(dag_id, schedule_interval)
         callbacks = self._generate_callbacks()
         tasks = self._generate_tasks()
         dependencies = self._generate_dependencies()
-        dag_code = f"{imports}\n\n{dag_definition}\n\n{callbacks}\n\n{tasks}\n\n{dependencies}"
+        if self._generate_external_task_sensor_indicator():
+            external_dependecies = ExternalDepUtils.generate_external_dependency_tasks(
+                self.external_task_to_dependent_task_map,self.external_task_to_dag_id_map, self.downstream_jil_schedule.strip("'"), self.dag_id_to_schedule_map)
+            dag_code = f"{imports}\n\n{dag_definition}\n\n{callbacks}\n\n{tasks}\n\n{external_dependecies}\n\n{dependencies}"
+        else:
+            dag_code = f"{imports}\n\n{dag_definition}\n\n{callbacks}\n\n{tasks}\n\n{dependencies}"
         #return dag_code
         with open("generated_dag.py", "w") as f:
             f.write(dag_code)
@@ -114,7 +92,7 @@ class AirflowDAGGenerator:
         if dag_id not in dags:
             return f"[DAG VALIDATION FAILED]\nDAG '{dag_id}' not found in parsed DAGs."
         return dag_code
-    
+
     def _get_required_imports(self) -> set:
         """Determine which operator imports are needed based on job types"""
         imports = {
@@ -173,7 +151,8 @@ class AirflowDAGGenerator:
         if has_k8s:
             imports.add("from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator")
         if has_file_sensor:
-            imports.add("from custom_operators.profile_aware_file_sensor import ProfileAwareFileSensor")
+            #imports.add("from airflow.providers.sftp.sensors.sftp import SFTPSensor")
+            imports.add("from custom_operators.profile_aware_sftp_sensor import ProfileAwareSftpSensor")
         if has_calendar:
             imports.add("from airflow.timetables.base import Timetable")
             imports.add("from calendars.calendars import *")
@@ -183,6 +162,9 @@ class AirflowDAGGenerator:
             imports.add("import pendulum")
         if has_sql:
             imports.add("from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator")
+        if self.handle_ext_ref:
+            imports.add("from airflow import Dataset")
+            imports.add("from airflow.sensors.external_task import ExternalTaskSensor")
         return imports
 
     def _generate_imports(self) -> str:
@@ -273,26 +255,6 @@ class AirflowDAGGenerator:
 """
         return func_def.strip("\n")
     
-    def _extract_external_dependency_to_job_mapping(self) -> dict:
-        """
-        Return a mapping of external_job -> list of jobs that depend on it.
-        """
-        dep_pattern = re.compile(r'(success|failure|done|notrunning|terminated)\(([^)]+)\)', re.IGNORECASE)
-        defined_jobs = set()
-        for job in self.jobs.values():
-            defined_jobs.add(job.name)
-        external_to_jobs = defaultdict(list)
-        for job in self.jobs.values():
-            if not job.condition:
-                continue
-            norm_condition = ConditionParser.normalize_condition(job.condition)
-            for _, dep_job in dep_pattern.findall(norm_condition):
-                dep_job = dep_job.strip()
-                if dep_job not in defined_jobs:
-                    external_to_jobs[dep_job].append(job.name)
-        print(f"external dependency :: {external_to_jobs}")
-        return dict(external_to_jobs)
-
 
     def _generate_tasks(self) -> str:
         """Generate all task definitions with nested box support"""
@@ -496,7 +458,7 @@ class AirflowDAGGenerator:
         return task_group_def
 
     def _generate_task_group_dependencies(self, children: list, indent: int = 4) -> str:
-        print("Here!")
+
         """Generate task dependencies within the task group with nested support"""
         dependencies = []
         indent_str = ""
@@ -534,7 +496,6 @@ class AirflowDAGGenerator:
                 for dep in deps:
                     # Only include dependencies that are within the same task group
                     if dep in children:
-                        print(f"xyz {dep}")
                         dep_task_ref = self._get_task_reference_within_group(dep, children)
                         job_deps.append(dep_task_ref)
             print(f"job_deps: {job_deps}")
@@ -601,7 +562,7 @@ class AirflowDAGGenerator:
         """Generate file sensor task"""
         filepath = job.watch_file
         indent_str = " " * indent 
-        fs_conn_id = job.fs_conn_id if job.fs_conn_id else "fs_default"
+        fs_conn_id = job.fs_conn_id if job.fs_conn_id else job.machine
         poke_interval = job.watch_interval if job.watch_interval else 60
         ##------------------New Features---------------
         retries = getattr(job, "n_retrys", 0)
@@ -641,7 +602,7 @@ class AirflowDAGGenerator:
         attributes.append(f"{indent_str}    dag=dag,")
 
         task_def = f"""
-{indent_str}{job.name} = ProfileAwareFileSensor(
+{indent_str}{job.name} = ProfileAwareSftpSensor(
 {chr(10).join([a for a in attributes if a])}
 {indent_str})
 """   
@@ -681,7 +642,13 @@ class AirflowDAGGenerator:
             common_attributes.append(f"{indent_str}    on_failure_callback=notify_{self.status_failure},")
         if term_run_time > 0:
             common_attributes.append(f"{indent_str}    execution_timeout=timedelta(minutes={term_run_time}),")
-        
+        print(f"external dependency list:: {self.ext_dep_list}")
+        if self.handle_ext_ref and self.dep_seq_info == "upstream" and self.downstream_jil_schedule == "None":
+            dataset_name = ""
+            for ext_dep_task in self.ext_dep_list:
+                if job.name == ext_dep_task:
+                    dataset_name = ext_dep_task
+                    common_attributes.append(f"{indent_str}    outlets=[Dataset('{dataset_name}')],")
         resolved_cmd = job.command
         # Append stdout/stderr redirection if present
         if getattr(job, "std_out_file", None):
@@ -692,8 +659,6 @@ class AirflowDAGGenerator:
         env_vars = "{}"
         if job.envvars:
             env_vars = json.dumps(job.envvars)
-        print("*"*5)
-        print(getattr(job, "operator_type", "KubernetesPodOperator"))
         if getattr(job, "operator_type", "KubernetesPodOperator") == "KubernetesPodOperator":
             # Determine if command is bash or python
             is_python = (job.command.startswith('python') or 
@@ -776,7 +741,6 @@ class AirflowDAGGenerator:
                 command = repr(f"bash -c '. {job.profile} && {resolved_cmd}'")
             else:
                 command = repr(resolved_cmd)
-            print(command)
 
             attributes = [
                 f"{indent_str}    task_id='{task_id}',",
@@ -808,7 +772,6 @@ class AirflowDAGGenerator:
             else:
                 # Static value already cast in parser
                 rendered_params[param_name] = value
-                print(f"rendered_params {rendered_params}")
         return f"""
 {indent_str}    sql=f"CALL {job.sp_name}({', '.join([f'%({p})s' for p in rendered_params.keys()])})",
 {indent_str}    parameters={rendered_params},
@@ -1157,118 +1120,3 @@ class AirflowDAGGenerator:
         
     #     # Build cron expression: minute hour day month day_of_week
     #     return f"{minute} {hour} * * {dow_str}"
-
-    def _determine_schedule_interval(self) -> str:
-        """Determine schedule interval from job start times, start mins, and date conditions"""
-        for job in self.jobs.values():
-            print(
-                f"Run Calendar: {job.run_calendar}, "
-                f"Start Times: {job.start_times}, "
-                f"Start Mins: {job.start_mins}, "
-                f"Days of Week: {job.days_of_week}"
-            )
-            
-            # Run calendar takes precedence
-            if job.run_calendar:
-                return f"{job.run_calendar}()"
-            
-            # Ensure start_times and start_mins are not both set
-            if job.start_times and job.start_mins:
-                raise ValueError(f"Job {job.job_name} has both start_times and start_mins defined, which is not allowed.")
-            
-            if job.start_times:
-                cron_schedule = self._convert_autosys_schedule_to_cron(job.start_times, job.days_of_week)
-                if cron_schedule:
-                    return f"'{cron_schedule}'"
-            
-            elif job.start_mins:
-                cron_schedule = self._convert_start_mins_to_cron(job.start_mins, job.days_of_week)
-                if cron_schedule:
-                    return f"'{cron_schedule}'"
-        
-        return "None"
-
-    def _convert_autosys_schedule_to_cron(self, start_times_str: str, days_of_week: List[str]) -> str:
-        """Convert Autosys start_times string to cron expression"""
-        # Clean and split string
-        start_times = [t.strip().strip('"') for t in start_times_str.split(',') if t.strip()]
-        
-        hours = []
-        minutes = []
-        
-        for time_str in start_times:
-            hour, minute = self._parse_time(time_str)
-            hours.append(str(hour))
-            minutes.append(str(minute))
-        
-        if len(set(minutes)) == 1:
-            minute_str = minutes[0]
-            hour_str = ','.join(hours)
-        else:
-            # Different minutes — just take the first time
-            return self._convert_single_time_to_cron(start_times[0], days_of_week)
-        
-        dow_str = self._convert_days_of_week(days_of_week)
-        return f"{minute_str} {hour_str} * * {dow_str}"
-
-    def _convert_start_mins_to_cron(self, start_mins_str: str, days_of_week: List[str]) -> str:
-        """Convert Autosys start_mins string to cron expression"""
-        # Clean and split
-        start_mins_list = [m.strip().strip('"') for m in start_mins_str.split(',') if m.strip()]
-        
-        # Validate 0–59
-        minute_values = []
-        for m in start_mins_list:
-            try:
-                val = int(m)
-                if 0 <= val <= 59:
-                    minute_values.append(str(val))
-                else:
-                    raise ValueError
-            except ValueError:
-                raise ValueError(f"Invalid minute value '{m}' in start_mins.")
-        
-        minute_str = ','.join(minute_values)
-        hour_str = '*'
-        dow_str = self._convert_days_of_week(days_of_week)
-        return f"{minute_str} {hour_str} * * {dow_str}"
-
-    def _parse_time(self, start_time: str) -> tuple:
-        """Parse time string and return (hour, minute) tuple"""
-        start_time = start_time.strip().strip('"')
-        if ':' in start_time:
-            hour, minute = start_time.split(':')
-            hour = int(hour)
-            minute = int(minute)
-        else:
-            if len(start_time) == 4:
-                hour = int(start_time[:2])
-                minute = int(start_time[2:])
-            else:
-                hour = int(start_time)
-                minute = 0
-        return hour, minute
-
-    def _convert_days_of_week(self, days_of_week: List[str]) -> str:
-        """Convert days of week from Autosys format to cron"""
-        dow_map = {
-            'su': '0', 'mo': '1', 'tu': '2', 'we': '3', 
-            'th': '4', 'fr': '5', 'sa': '6',
-            'sun': '0', 'mon': '1', 'tue': '2', 'wed': '3',
-            'thu': '4', 'fri': '5', 'sat': '6'
-        }
-        
-        if days_of_week:
-            cron_days = []
-            for day in days_of_week:
-                day_lower = day.lower().strip()
-                if day_lower in dow_map:
-                    cron_days.append(dow_map[day_lower])
-            return ','.join(cron_days) if cron_days else '*'
-        return '*'
-
-    def _convert_single_time_to_cron(self, start_time: str, days_of_week: List[str]) -> str:
-        """Convert single Autosys time to cron expression"""
-        hour, minute = self._parse_time(start_time)
-        dow_str = self._convert_days_of_week(days_of_week)
-        return f"{minute} {hour} * * {dow_str}"
