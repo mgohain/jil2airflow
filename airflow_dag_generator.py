@@ -54,7 +54,8 @@ class AirflowDAGGenerator:
 
         if self.handle_ext_ref == True and schedule_interval.strip("'") == "None":
             if self.dep_seq_info == "downstream":
-                schedule_interval = f'[{", ".join([f"Dataset(\'{job}\')" for job in self.ext_dep_list])}]'
+                datasets = [f"Dataset('{job}')" for job in self.ext_dep_list]
+                schedule_interval = f"[{', '.join(datasets)}]"
         imports = self._generate_imports()
         dag_definition = self._generate_dag_definition(dag_id, schedule_interval)
         callbacks = self._generate_callbacks()
