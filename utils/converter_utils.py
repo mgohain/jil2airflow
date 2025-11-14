@@ -1,32 +1,6 @@
 from typing import Dict, List
 from autosys_job import AutosysJob
-from utils.timezone_map import TIMEZONE_MAP
 class Utils:
-    @staticmethod  
-    def get_iana_timezone(raw_tz: str) -> str:
-        timezone = None
-        # Check if Autosys created timezone
-        import configparser
-        config = configparser.ConfigParser()
-        config.read('autosys_tz_to_IANA_tz_map.cfg')
-        if config.has_section('TIMEZONES') and config.has_option('TIMEZONES', raw_tz):
-            raw_tz = config.get('TIMEZONES', raw_tz)
-                # Using IANA from mapping
-        iana_tz = TIMEZONE_MAP.get(raw_tz, raw_tz)        
-        return iana_tz
-    
-    @staticmethod
-    def get_timezone_for_dag(jobs: Dict[str, AutosysJob]) -> str:
-        timezone = None
-        for job in jobs.values():
-            if job.date_conditions == 1 and getattr(job, "timezone", None):
-                mapped_tz = job.timezone           
-                if timezone is None:
-                    timezone = mapped_tz
-                elif mapped_tz != timezone:
-                    raise ValueError("JIL file contains jobs having different timezone schedules")
-        return timezone    
-
     @staticmethod    
     def build_box_hierarchy(jobs: Dict[str, AutosysJob]) -> Dict[str, Dict]:
         """Build hierarchy of box jobs and their contained jobs with nesting support"""
