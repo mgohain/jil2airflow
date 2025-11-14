@@ -1,7 +1,6 @@
 from typing import Dict, Optional
 from autosys_job import AutosysJob
 from collections import OrderedDict
-from utils.converter_utils import Utils
 
 class JILParser:
     """Parser for Autosys JIL files"""
@@ -137,7 +136,7 @@ class JILParser:
         elif key == 'alarm_if_terminated':
             job.alarm_if_terminated = self.parse_value(value)
         elif key == 'timezone':
-            job.timezone = Utils.get_iana_timezone(value.strip().strip('"').strip('\''))
+            job.timezone = value.strip().strip('"').strip('\'')
         elif key == 'send_notification':
             job.send_notification = self.parse_value(value)
         elif key == 'notification_emailaddress':

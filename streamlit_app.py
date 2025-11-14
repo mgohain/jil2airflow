@@ -14,7 +14,6 @@ from typing import Dict
 from autosys_job import AutosysJob
 from  utils.external_dep_utils import ExternalDepUtils
 from utils.converter_utils import Utils
-from collections import defaultdict
 
 # ----------------------------------------
 # Session Init
@@ -39,8 +38,7 @@ def init_session():
         "jil_files_full_name": [],
         "dep_info": {},
         "handle_ext_ref": False,
-        "downstream_jil_schedule": "",
-        "downstream_jil_tz": ""
+        "downstream_jil_schedule": ""
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -277,12 +275,11 @@ elif st.session_state.step == 1 and st.session_state.mode == "batch":
         #extracting fully qualified job name
         external_job_to_dependent_map = next(iter(st.session_state.ext_dep_dict.values()), {})
         external_task_to_dag_id_map = {}
-        dag_id_to_schedule_map = defaultdict(dict)
+        dag_id_to_schedule_map = {}
         for fname, jobs_dict in st.session_state.batch_jobs_dicts.items():
             dag_id = f"{fname.split('.')[0]}"
             schedule = Utils.determine_schedule_interval(jobs_dict)
-            dag_id_to_schedule_map[dag_id]["schedule"] = schedule
-            dag_id_to_schedule_map[dag_id]["timezone"] = Utils.get_timezone_for_dag(jobs_dict)
+            dag_id_to_schedule_map[dag_id] = schedule
             if st.session_state.handle_ext_ref:
                 full_job_names = get_prefixed_job_names(jobs_dict)
                 for job_name, job in jobs_dict.items():
@@ -296,12 +293,12 @@ elif st.session_state.step == 1 and st.session_state.mode == "batch":
             dag_id = f"{fname.split('.')[0]}"
             if st.session_state.handle_ext_ref:
                 dag_code = AirflowDAGGenerator(jobs_dict, [job for sublist in st.session_state.ext_dep_dict.values() for job in sublist],
-                                           st.session_state.dep_info.get(fname, None),
+                                           st.session_state.dep_info.get(fname, None), st.session_state.schedule,
                                            external_job_to_dependent_map, external_task_to_dag_id_map, dag_id_to_schedule_map, st.session_state.downstream_jil_schedule,
-                                           st.session_state.downstream_jil_tz, st.session_state.handle_ext_ref).generate_dag(dag_id, st.session_state.schedule)
+                                           st.session_state.handle_ext_ref).generate_dag(dag_id, st.session_state.schedule)
             else:
-                dag_code = AirflowDAGGenerator(jobs_dict, {}, None,
-                                           {}, {}, {}, st.session_state.downstream_jil_schedule, st.session_state.downstream_jil_tz, False).generate_dag(dag_id, st.session_state.schedule)
+                dag_code = AirflowDAGGenerator(jobs_dict, {}, None, st.session_state.schedule,
+                                           {}, {}, {}, st.session_state.downstream_jil_schedule, False).generate_dag(dag_id, st.session_state.schedule)
             st.session_state.batch_dags[fname] = {
                 "dag_id": dag_id,
                 "code": dag_code,
@@ -459,7 +456,6 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
     st.dataframe(style_table(df), width='stretch')
     #extract schedule of the downstream job
     st.session_state.downstream_jil_schedule = Utils.determine_schedule_interval(st.session_state.jobs_dict)
-    st.session_state.downstream_jil_tz = Utils.get_timezone_for_dag(st.session_state.jobs_dict)
 
     option = st.radio("Choose option to handle external dependency",
                       ["Separate - This will generate separate Dag for each uploaded JIL files",
