@@ -1,6 +1,23 @@
 from typing import Dict, List
 from autosys_job import AutosysJob
+from collections import defaultdict
 class Utils:
+
+    @staticmethod
+    def check_for_schedules(jobs: Dict[str, AutosysJob])-> Dict:
+        jobname_to_schedule_map = defaultdict(dict)
+        for job in jobs.values():
+            schedule = job.run_calendar or job.start_times or job.start_mins
+            if job.run_calendar or job.start_times or job.start_mins:
+                jobname_to_schedule_map[job.name]["schedule"] = schedule
+                jobname_to_schedule_map[job.name]["timezone"] = (job.timezone if job.timezone else "")
+            if job.timezone and not (job.run_calendar and job.start_times and job.start_mins):
+                jobname_to_schedule_map[job.name]["schedule"] = schedule or ""
+                jobname_to_schedule_map[job.name]["timezone"] = job.timezone
+        if len(jobname_to_schedule_map) > 1:
+            return jobname_to_schedule_map
+        else:
+            return {}
     @staticmethod    
     def build_box_hierarchy(jobs: Dict[str, AutosysJob]) -> Dict[str, Dict]:
         """Build hierarchy of box jobs and their contained jobs with nesting support"""

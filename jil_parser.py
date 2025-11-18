@@ -1,6 +1,7 @@
 from typing import Dict, Optional
 from autosys_job import AutosysJob
 from collections import OrderedDict
+import re
 
 class JILParser:
     """Parser for Autosys JIL files"""
@@ -82,7 +83,8 @@ class JILParser:
         if key == 'job_type':
             job.job_type = value
         elif key == 'command':
-            job.command = value
+            job.command = value.strip().strip('"').strip('\'')
+            job.command = re.sub(r"\$\{?AUTO_JOB_NAME\}?", job.name, job.command)
         elif key == 'machine':
             job.machine = self.autosys_machine_to_airflow_conn_id_map.get(value, value)
         elif key == 'owner':
@@ -100,11 +102,13 @@ class JILParser:
         elif key == 'description':
             job.description = value
         elif key == 'std_out_file':
-            job.std_out_file = value
+            job.std_out_file = value.strip().strip('"').strip('\'')
+            job.std_out_file = re.sub(r"\$\{?AUTO_JOB_NAME\}?", job.name + ".log", job.std_out_file)
         elif key == 'std_err_file':
-            job.std_err_file = value
+            job.std_err_file = value.strip().strip('"').strip('\'')
+            job.std_err_file = re.sub(r"\$\{?AUTO_JOB_NAME\}?", job.name + ".err", job.std_err_file)
         elif key == 'profile':
-            job.profile = value
+            job.profile = value.strip().strip('"').strip('\'')
         elif key == 'start_mins':
             job.start_mins = value
         elif key == 'priority':
@@ -114,7 +118,8 @@ class JILParser:
         elif key == 'min_run_alarm':
             job.min_run_alarm = int(value)
         elif key == 'watch_file':
-            job.watch_file = value.strip('"')
+            job.watch_file = value.strip().strip('"').strip('\'')
+            job.watch_file = re.sub(r"\$\{?AUTO_JOB_NAME\}?", job.name, job.watch_file)
         elif key == 'watch_interval':
             job.watch_interval = int(value)
         elif key == 'watch_file_min_size':

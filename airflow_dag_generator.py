@@ -63,8 +63,7 @@ class AirflowDAGGenerator:
         dependencies = self._generate_dependencies()
         if self._generate_external_task_sensor_indicator():
             external_dependecies = ExternalDepUtils.generate_external_dependency_tasks(
-                self.external_task_to_dependent_task_map,self.external_task_to_dag_id_map, self.downstream_jil_schedule.strip("'"),
-                self.downstream_jil_tz, self.dag_id_to_schedule_map)
+                self.external_task_to_dependent_task_map,self.external_task_to_dag_id_map, self.downstream_jil_schedule.strip("'"), self.dag_id_to_schedule_map)
             dag_code = f"{imports}\n\n{dag_definition}\n\n{callbacks}\n\n{tasks}\n\n{external_dependecies}\n\n{dependencies}"
         else:
             dag_code = f"{imports}\n\n{dag_definition}\n\n{callbacks}\n\n{tasks}\n\n{dependencies}"
@@ -654,9 +653,15 @@ class AirflowDAGGenerator:
         resolved_cmd = job.command
         # Append stdout/stderr redirection if present
         if getattr(job, "std_out_file", None):
-            resolved_cmd += f" > {job.std_out_file}"
+            if job.std_out_file.startswith(">"):
+                resolved_cmd += f" >{job.std_out_file}"
+            else:
+                resolved_cmd += f" > {job.std_out_file}"
         if getattr(job, "std_err_file", None):
-            resolved_cmd += f" 2> {job.std_err_file}"
+            if job.std_err_file.startswith(">"):
+                resolved_cmd += f" 2>{job.std_err_file}"
+            else:
+                resolved_cmd += f" 2> {job.std_err_file}"
         # Build environment variables
         env_vars = "{}"
         if job.envvars:

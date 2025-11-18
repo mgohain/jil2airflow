@@ -38,7 +38,8 @@ def init_session():
         "jil_files_full_name": [],
         "dep_info": {},
         "handle_ext_ref": False,
-        "downstream_jil_schedule": ""
+        "downstream_jil_schedule": "",
+        "jobs_schedule_dict": {}
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -145,6 +146,7 @@ if st.session_state.step == 0:
             files = [files]
         parsed_files = {}
         ext_dep_dict = {}
+        jobs_schedule_dict = {}
         parser = None
         if st.session_state.mode == "single":
             parser = JILParser()
@@ -172,11 +174,22 @@ if st.session_state.step == 0:
                             job.command = substitute_env_vars(job.command, st.session_state.env_vars)
                         if hasattr(job, "watch_file") and job.watch_file:
                             job.watch_file = substitute_env_vars(job.watch_file, st.session_state.env_vars)
+                        if hasattr(job, "std_out_file") and job.std_out_file:
+                            job.std_out_file = substitute_env_vars(job.std_out_file, st.session_state.env_vars)
+                        if hasattr(job, "std_err_file") and job.std_err_file:
+                            job.std_err_file = substitute_env_vars(job.std_err_file, st.session_state.env_vars)    
                 if not jobs:
                     st.warning(f"⚠️ No jobs found in: {f.name}")
                     continue
                     
                 parsed_files[f.name] = jobs
+                #-----------------------------------------
+                # Checking if jil has multiple schedules
+                #-------------------------------------------
+                job_name_to_schedule_map = Utils.check_for_schedules(jobs)
+                if job_name_to_schedule_map:
+                    jobs_schedule_dict[f.name] = job_name_to_schedule_map
+                #-----------------End of job schedule check    
                 #------------------------------------------
                 # CHecking for external dependency
                 #------------------------------------------
@@ -195,6 +208,13 @@ if st.session_state.step == 0:
                 st.session_state.dep_info[st.session_state.jil_files_full_name[0]]="downstream"                                       
             else:
                 st.session_state.batch_jobs_dicts = parsed_files
+            #------------------- Redirection if multiple schedules are found in a jil -----------
+            if jobs_schedule_dict:
+                st.session_state.jobs_schedule_dict = jobs_schedule_dict
+                st.session_state.step = 50
+                st.rerun()  
+            #------------------- End -------------------------------------------------------
+            
             #------------------- Redirecting if external dependency found-------   
             if ext_dep_dict:
                 st.session_state.ext_dep_dict = ext_dep_dict
@@ -423,7 +443,7 @@ elif st.session_state.step == -1 and st.session_state.mode == "batch":
             'border-style': 'solid',
             'padding': '5px'
         }).apply(lambda x: ['background-color: #eef6ff' if i % 2 == 0 else '' for i in range(len(x))], axis=0)
-    st.dataframe(style_table(df), width='stretch')
+    st.dataframe(style_table(df), use_container_width=True)
     st.error("⚠️ Remove files having external dependency!")
     if st.button("🔄 Restart Wizard", key="step_minus1_restart"):
         env_vars = st.session_state.get("env_vars", {})
@@ -453,7 +473,7 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
             'border-style': 'solid',
             'padding': '5px'
         }).apply(lambda x: ['background-color: #eef6ff' if i % 2 == 0 else '' for i in range(len(x))], axis=0)
-    st.dataframe(style_table(df), width='stretch')
+    st.dataframe(style_table(df), use_container_width=True)
     #extract schedule of the downstream job
     st.session_state.downstream_jil_schedule = Utils.determine_schedule_interval(st.session_state.jobs_dict)
 
@@ -499,6 +519,10 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
                             job.command = substitute_env_vars(job.command, st.session_state.env_vars)
                         if hasattr(job, "watch_file") and job.watch_file:
                             job.watch_file = substitute_env_vars(job.watch_file, st.session_state.env_vars)
+                        if hasattr(job, "std_out_file") and job.std_out_file:
+                            job.std_out_file = substitute_env_vars(job.std_out_file, st.session_state.env_vars)
+                        if hasattr(job, "std_err_file") and job.std_err_file:
+                            job.std_err_file = substitute_env_vars(job.std_err_file, st.session_state.env_vars)        
                 if not jobs:
                     st.warning(f"⚠️ No jobs found in: {f.name}")
                     continue
@@ -568,4 +592,41 @@ elif st.session_state.step == 9 and st.session_state.mode == "single":
                     del st.session_state[key]
                 st.session_state.env_vars = env_vars
                 st.session_state.env_vars_list = env_vars_list
-                st.rerun()            
+                st.rerun()
+elif st.session_state.step == 50:
+    import pandas as pd
+    st.header("⚠️ Multiple schedule or multiple timezone found!")
+    jobs_schedule_dict = st.session_state.jobs_schedule_dict
+    print(f"jobs_schedule_dict - {jobs_schedule_dict}")
+    rows = []
+    if jobs_schedule_dict:
+        for fname, job_to_schedule_dict in jobs_schedule_dict.items():
+            for job_name, schedule_list in job_to_schedule_dict.items():
+                rows.append({
+                    "File Name": fname,
+                    "Job name": job_name,
+                    "Schedule": jobs_schedule_dict.get(fname, {}).get(job_name, {}).get("schedule", "-"),
+                    "Timezone": jobs_schedule_dict.get(fname, {}).get(job_name, {}).get("timezone", "-")
+                })          
+    df = pd.DataFrame(rows)
+    # Apply zebra-striping style
+    def style_table(df):
+        return df.style.set_properties(**{
+            'background-color': '#f9f9f9',
+            'color': '#000',
+            'border-color': '#ddd',
+            'border-width': '1px',
+            'border-style': 'solid',
+            'padding': '5px'
+        }).apply(lambda x: ['background-color: #eef6ff' if i % 2 == 0 else '' for i in range(len(x))], axis=0)
+    st.dataframe(style_table(df), use_container_width=True)
+    st.error("⚠️ Airflow does not support multiple schedule/timezone!")
+    st.error("⚠️ Remove file/s having multiple schedule or multiple timezone!")
+    if st.button("🔄 Restart Wizard", key="step_50_restart"):
+        env_vars = st.session_state.get("env_vars", {})
+        env_vars_list = st.session_state.get("env_vars_list", [])
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.session_state.env_vars = env_vars
+        st.session_state.env_vars_list = env_vars_list
+        st.rerun()     
