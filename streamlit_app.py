@@ -99,7 +99,7 @@ def get_prefixed_job_names(jobs: Dict[str, AutosysJob]) -> Dict[str, str]:
 with st.sidebar:
     st.header("Profile / Environment Variables")
     # Checkbox for substitution
-    substitute_in_command = st.checkbox("Substitute in command", value=st.session_state.get("substitute_in_command", False), key="substitute_in_command")
+    substitute_in_command = st.checkbox("Substitute in command", key="substitute_in_command")
     # Do NOT assign to st.session_state.substitute_in_command here
     if "env_vars" not in st.session_state:
         st.session_state.env_vars = {}
