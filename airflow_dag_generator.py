@@ -654,12 +654,12 @@ class AirflowDAGGenerator:
         # Append stdout/stderr redirection if present
         if getattr(job, "std_out_file", None):
             if job.std_out_file.startswith(">"):
-                resolved_cmd += f" >{job.std_out_file}"
+                resolved_cmd += f" {job.std_out_file}"
             else:
                 resolved_cmd += f" > {job.std_out_file}"
         if getattr(job, "std_err_file", None):
             if job.std_err_file.startswith(">"):
-                resolved_cmd += f" 2>{job.std_err_file}"
+                resolved_cmd += f" 2{job.std_err_file}"
             else:
                 resolved_cmd += f" 2> {job.std_err_file}"
         # Build environment variables

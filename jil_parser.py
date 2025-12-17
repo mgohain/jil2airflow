@@ -102,11 +102,13 @@ class JILParser:
         elif key == 'description':
             job.description = value
         elif key == 'std_out_file':
-            job.std_out_file = value.strip().strip('"').strip('\'')
-            job.std_out_file = re.sub(r"\$\{?AUTO_JOB_NAME\}?", job.name + ".log", job.std_out_file)
+            job.std_out_file = value.strip('"').strip('\'').strip()
+            replacement = job.name if job.std_out_file.endswith(".log") else job.name + ".log"
+            job.std_out_file = re.sub(r"\$\{?AUTO_JOB_NAME\}?", replacement, job.std_out_file)
         elif key == 'std_err_file':
-            job.std_err_file = value.strip().strip('"').strip('\'')
-            job.std_err_file = re.sub(r"\$\{?AUTO_JOB_NAME\}?", job.name + ".err", job.std_err_file)
+            job.std_err_file = value.strip('"').strip('\'').strip()
+            replacement = job.name if job.std_err_file.endswith(".err") else job.name + ".err"
+            job.std_err_file = re.sub(r"\$\{?AUTO_JOB_NAME\}?", replacement, job.std_err_file)
         elif key == 'profile':
             job.profile = value.strip().strip('"').strip('\'')
         elif key == 'start_mins':
