@@ -156,7 +156,7 @@ class AirflowDAGGenerator:
             imports.add("from custom_operators.profile_aware_sftp_sensor import ProfileAwareSftpSensor")
         if has_calendar:
             imports.add("from airflow.timetables.base import Timetable")
-            imports.add("from calendars.calendars import *")
+            imports.add("from custom_calendars import *")
         if need_email_notification:
             imports.add("from airflow.utils.email import send_email")
         if has_timezone:

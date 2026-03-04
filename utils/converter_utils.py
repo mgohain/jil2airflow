@@ -79,7 +79,15 @@ class Utils:
             
             # Run calendar takes precedence
             if job.run_calendar:
-                return f"{job.run_calendar}()"
+                if job.start_times:
+                    start_hr, start_min = map(
+                    int,
+                    job.start_times.strip('"').strip("'").split(":")
+                )
+                else:
+                    start_hr, start_min = 0, 0
+                timezone = job.timezone if job.timezone else "UTC"
+                return f"{job.run_calendar}({start_hr}, {start_min}, '{timezone}')"
             
             # Ensure start_times and start_mins are not both set
             if job.start_times and job.start_mins:
