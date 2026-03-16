@@ -18,6 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+          ref: ${{ github.head_ref }}
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@dcc5211de53084482f1c6779dda263459f5274f6
         env:
@@ -28,8 +29,20 @@ jobs:
         run: |
           curl -s -u $SONAR_TOKEN: \
           "https://sonarcloud.io/api/issues/search?componentKeys=mgohain_jil2airflow" | jq '.' > sonar_issues.json
-      - name: Upload Sonar report
-        uses: actions/upload-artifact@v4
-        with:
-          name: sonar-issues-report
-          path: sonar_issues.json
+      #- name: Upload Sonar report
+        #uses: actions/upload-artifact@v4
+        #with:
+          #name: sonar-issues-report
+          #path: sonar_issues.json
+      - name: Comment Sonar Issues on PR
+        run: |
+          git config  user.name "mgohain"
+          git config  user.email "mridulgohain10@gmail.com"
+
+          git add sonar_issues.json
+          git diff --staged --quiet || git commit -m "Update Sonar report"
+
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@://github.com{{ github.repository }}.git HEAD:${{ github.head_ref }}
+          
+        
+      
