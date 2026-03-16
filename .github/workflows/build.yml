@@ -28,10 +28,8 @@ jobs:
         run: |
           curl -s -u $SONAR_TOKEN: \
           "https://sonarcloud.io/api/issues/search?componentKeys=mgohain_jil2airflow" | jq '.' > sonar_issues.json
-      - name: Commit report 
-        run: |
-          git config --global user.name "mgohain"
-          git config --global user.email "mridulgohain10@gmail.com"
-          git add sonar_issues.json
-          git diff --staged --quiet || git commit -m "Update Sonar report"
-          git push origin HEAD:${{ github.ref_name }}
+      - name: Upload Sonar report
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonar-issues-report
+          path: sonar_issues.json
