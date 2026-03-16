@@ -3,17 +3,35 @@ on:
   push:
     branches:
       - main
+    path-ignores:
+      - sonar_report.json
   pull_request:
     types: [opened, synchronize, reopened]
+permissions:
+  contents: write
 jobs:
   sonarqube:
     name: SonarQube
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@dcc5211de53084482f1c6779dda263459f5274f6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Fetch Sonar Issues
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          curl -s -u $SONAR_TOKEN: \
+          "https://sonarcloud.io/api/issues/search?componentKeys=mgohain_jil2airflow" | jq '.' > sonar_issues.json
+      - name: Commit report 
+        run: |
+          git config --global user.name "mgohain"
+          git config --global user.email "mridulgohain10@gmail.com"
+          git add sonar_issues.json
+          git diff --staged --quiet || git commit -m "Update Sonar report"
+          git push
