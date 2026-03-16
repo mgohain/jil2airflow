@@ -35,6 +35,8 @@ jobs:
           #name: sonar-issues-report
           #path: sonar_issues.json
       - name: Comment Sonar Issues on PR
+        env: 
+          BRANCH_NAME: ${{ github.head_ref }}
         run: |
           git config  user.name "mgohain"
           git config  user.email "mridulgohain10@gmail.com"
@@ -42,7 +44,7 @@ jobs:
           git add sonar_issues.json
           git diff --staged --quiet || git commit -m "Update Sonar report"
 
-          git push origin HEAD:${{ github.head_ref }}
+          git push origin HEAD:$BRANCH_NAME
           
         
       
