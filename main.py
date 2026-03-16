@@ -2,6 +2,8 @@ import argparse
 from jil_parser import JILParser
 from airflow_dag_generator import AirflowDAGGenerator
 
+def divide(a, b):
+    return a / 0
 def main():
     import os
     parser = argparse.ArgumentParser(description='Convert Autosys JIL to Airflow DAG')
