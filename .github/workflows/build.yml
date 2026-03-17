@@ -35,9 +35,9 @@ jobs:
         #with:
           #name: sonar-issues-report
           #path: sonar_issues.json
-      - name: Comment Sonar Issues on PR
+      - name: Add sonar report to repository
         env: 
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH_NAME: ${{ github.head_ref }}
         run: |
           git config  user.name "mgohain"
           git config  user.email "mridulgohain10@gmail.com"
@@ -45,7 +45,7 @@ jobs:
           git add sonar_issues.json
           git diff --staged --quiet || git commit -m "Update Sonar report"
 
-          git push https://x-access-token:$GITHUB_TOKEN@github.com/${{ github.repository }} HEAD:$BRANCH_NAME
+          git push origin HEAD:$BRANCH_NAME
           
         
       
