@@ -26,9 +26,10 @@ jobs:
       - name: Fetch Sonar Issues
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           curl -s -u $SONAR_TOKEN: \
-          "https://sonarcloud.io/api/issues/search?componentKeys=mgohain_jil2airflow" | jq '.' > sonar_issues.json
+          "https://sonarcloud.io/api/issues/search?componentKeys=mgohain_jil2airflow&pullRequest=${PR_NUMBER}" | jq '.' > sonar_issues.json
       #- name: Upload Sonar report
         #uses: actions/upload-artifact@v4
         #with:
